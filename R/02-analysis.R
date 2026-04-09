@@ -3,15 +3,25 @@
 # ------------------------------------------------------------------------------
 # Load required R packages
 library(phiper)
-library(rlang)
-library(ggplot2)
+library(tidyverse)
 library(Cairo)
-library(openxlsx)
-library(dplyr)
-library(purrr)
+library(ggpubr)
 library(locfdr)
+library(mgcv)
+library(openxlsx)
+library(patchwork)
+library(rlang)
+library(showtext)
+library(vegan)
 
 set.seed(632961)
+
+source(file.path("R", "helpers.R"))
+
+# Add font + phiper use font in all plots
+font_add_google("Montserrat", "monte")
+phip_use_montserrat()
+showtext_auto()
 
 # ------------------------------------------------------------------------------
 # Command-line arguments
@@ -24,6 +34,7 @@ LOG <- TRUE
 LOG_FILE <- NULL
 MAX_GB <- 10
 FORCE <- TRUE
+
 args <- commandArgs(trailingOnly = TRUE)
 for (arg in args) {
   if (grepl("=", arg)) {
@@ -70,12 +81,25 @@ withr::with_preserve_seed({
     fold_change       = "fold_change",
     counts_input      = NULL,
     counts_hit        = NULL,
-    peptide_library   = TRUE,
+    peptide_library   = FALSE,  # using library from Weizmann Institute
     materialise_table = TRUE,
     auto_expand       = TRUE,
     n_cores           = 10
   )
 })
+
+# Adding custom peptide library
+peplib <- read.csv("data/processed/peptide_library.csv")
+
+con <- ps$data_long %>% dbplyr::remote_con()
+ps$peptide_library <- copy_to(
+  dest = con,
+  df = peplib,
+  name = "peptide_library",
+  temporary = FALSE,
+  overwrite = TRUE
+)
+rm(con)
 
 # ------------------------------------------------------------------------------
 # Results directory + peptide library snapshot
@@ -96,50 +120,23 @@ saveRDS(peptide_library, file = file.path("results", "peptide_library.rds"))
 # ------------------------------------------------------------------------------
 # List of comparisons (each entry is a pair of group labels)
 comparisons <- list(
-  c("R_T1", "NR_T1")
-  # c("R_T2", "NR_T2"),
-  # c("R_T3", "NR_T3"),
-  # c("R_T4", "NR_T4"),
-  # c("R_T1", "R_T2"),
-  # c("NR_T1", "NR_T2")
+  c("R_T1", "NR_T1"),
+  c("R_T2", "NR_T2"),
+  c("R_T3", "NR_T3"),
+  c("R_T4", "NR_T4"),
+  c("R_T1", "R_T2"),
+  c("NR_T1", "NR_T2")
 )
 
 # Columns that are always retained when exporting data
 base_cols <- c("sample_id", "peptide_id", "group_char", "exist")
 
-# ------------------------------------------------------------------------------
-# I/O helpers
-# ------------------------------------------------------------------------------
-# Save an R object to an RDS file, creating parent directories if needed
-save_rds_safe <- function(x, path) {
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  saveRDS(x, file = path)
-}
-
-# Select requested columns (base + extras), optionally drop rows with NA in
-# selected columns, collect to R, and save to RDS
-make_and_save <- function(data, out_path, extra_vars = NULL, drop_na = TRUE) {
-  cols_to_select <- unique(c(base_cols, extra_vars %||% character(0)))
-
-  avail_cols <- names(data) # MH: THIS IS ALWAYS NULL
-  missing_cols <- setdiff(cols_to_select, avail_cols)
-  if (length(missing_cols) > 0) {
-    message("Skipping missing columns: ", paste(missing_cols, collapse = ", "))
-  }
-
-  df <- data %>%
-    dplyr::select(dplyr::any_of(cols_to_select))
-
-  if (isTRUE(drop_na)) {
-    cols_present <- intersect(cols_to_select, names(df))
-    df <- df %>%
-      dplyr::filter(dplyr::if_all(dplyr::all_of(cols_present), ~ !is.na(.x)))
-  }
-
-  df <- df %>% dplyr::collect()
-  save_rds_safe(df, out_path)
-  invisible(df)
-}
+# Colours scheme for plotting
+labels <- unique(unlist(comparisons))
+group_palette <- setNames(
+  ifelse(grepl("NR_", labels), phip_palette[9], phip_palette[1]),
+  labels
+)
 
 # ------------------------------------------------------------------------------
 # Parallel backend (DELTA)
@@ -178,7 +175,7 @@ if (.Platform$OS.type == "windows") {
 #   3) Alpha diversity
 #   4) Beta diversity (distances, ordinations, PERMANOVA, dispersion, t-SNE)
 #   5) POP framework (prevalence comparison + plots)
-#   6) DELTA framework (permutation-based differential prevalence) MH: SKIP
+#   6) DELTA framework (permutation-based differential prevalence)
 for (cmp in comparisons) {
   var1 <- cmp[[1]]
   var2 <- cmp[[2]]
@@ -209,133 +206,190 @@ for (cmp in comparisons) {
   # ----------------------------------------------------------------------------
   # Enrichment counts
   # ----------------------------------------------------------------------------
-  CairoSVG(file.path(out_dir, "enrichment_counts.svg"), dpi = 300,
-           height = 30, width = 40, unit = "cm", bg = "white")
-  p_enrich <- plot_enrichment_counts(ps_cmp, group_cols = "group_char") +
-    # theme(text = element_text(family = "DejaVu Sans")) +
+  # MH: Formatting of y axis, log10, bold -> phiper issue
+  # MH: Facet wrap in order of vars -> phiper issue
+  p_enrich <- plot_enrichment_counts(
+    ps_cmp, 
+    group_cols = "group_char",
+    custom_colors = group_palette
+  ) +
     facet_wrap(
-      vars(forcats::fct_relevel(as.factor(Cohort), "R_T1", "NR_T1")),
+      vars(forcats::fct_relevel(as.factor(Cohort), var1, var2)),
       ncol = 2,
-      scales = "free_x",
-      drop = FALSE
-    )
-  print(p_enrich)
-  dev.off()
+      scales = "free_x"
+    ) +
+    theme(text = element_text(size = 12)) +
+    labs(title = NULL)
+  
+  ggsave(
+    filename = file.path(out_dir, "enrichment_counts.pdf"),
+    plot = p_enrich,
+    width = 18, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
 
   # ----------------------------------------------------------------------------
   # Alpha diversity
   # ----------------------------------------------------------------------------
-  alpha_div <- compute_alpha_diversity(ps_cmp,
-                                       group_cols = "group_char",
-                                       carry_cols = c("sex", "age"))
+  alpha_div <- compute_alpha_diversity(
+    ps_cmp,
+    group_cols = "group_char",
+    carry_cols = c("sex", "age")
+  )
+  alpha_div <- alpha_div$group_char
 
-  dir.create(file.path(out_dir, "alpha_diversity"),
-             recursive = TRUE, showWarnings = FALSE)
-
+  dir.create(file.path(out_dir, "alpha_diversity"), recursive = T, showWarnings = F)
   write.xlsx(alpha_div, file.path(out_dir, "alpha_diversity", "table.xlsx"))
 
-  # Richness
-  CairoSVG(file.path(out_dir, "alpha_diversity", "plot.svg"), dpi = 300,
-           height = 30, width = 40, unit = "cm", bg = "white")
+  # Alpha diversity plot (Richness + Shannon)
+  metrics <- c("richness", "shannon_diversity")
 
-  p_alpha_r <- plot_alpha_diversity(alpha_div,
-                                    metric = "richness",
-                                    group_col = "group_char",
-                                    x_order = cmp)
-  print(p_alpha_r)
-  dev.off()
-  
-  # Shannon diversity
-  CairoSVG(file.path(out_dir, "alpha_diversity", "plot_shannon.svg"), dpi = 300,
-           height = 30, width = 40, unit = "cm", bg = "white")
-  
-  p_alpha_sh <- plot_alpha_diversity(alpha_div,
-                                     metric = "shannon_diversity",
-                                     group_col = "group_char",
-                                     x_order = cmp)
-  print(p_alpha_sh)
-  dev.off()
+  p_alpha <- lapply(metrics, function(m) {
+    # Calculate and format p-values first
+    pv <- compare_means(
+      formula = reformulate("group_char", response = m),
+      data = alpha_div,
+      method = "wilcox.test",
+      comparisons = list(cmp)
+    ) %>%
+      mutate(
+        p = format_pval(p),
+        y.position = max(alpha_div[[m]], na.rm = TRUE) * 1.1
+      )
+    
+    p_alpha <- phiper::plot_alpha_diversity(
+      alpha_div,
+      metric = m,
+      group_col = "group_char",
+      x_order = cmp
+    ) +
+      stat_pvalue_manual(
+        pv,
+        label = "p",
+        y.position = "y.position",
+        tip.length = 0.02,
+        label.size = 4,
+        family = "Montserrat"
+      ) +
+      scale_fill_manual(values = group_palette) +
+      coord_cartesian(clip = "off") + 
+      theme(
+        text = element_text(size = 12),
+        axis.title.x = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+      )
+    p_alpha
+  })
+  p_alpha <- wrap_plots(p_alpha)
 
+  ggsave(
+    filename = file.path(out_dir, "alpha_diversity", "plot_alpha_diversity.pdf"),
+    plot = p_alpha,
+    width = 18, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
+  
   # ----------------------------------------------------------------------------
   # Beta diversity
   # ----------------------------------------------------------------------------
-  dist_bc <- phiper:::compute_distance(ps_cmp, value_col = "exist",
-                                       method_normalization = "hellinger",
-                                       distance = "bray", n_threads = 10)
+  dist_bc <- phiper:::compute_distance(
+    ps_cmp, value_col = "exist",
+    method_normalization = "auto",
+    distance = "bray", n_threads = 10
+  )
 
-  dir.create(file.path(out_dir, "beta_diversity"),
-             recursive = TRUE,
-             showWarnings = FALSE)
-
+  dir.create(file.path(out_dir, "beta_diversity"), recursive = T, showWarnings = F)
   dist_mat <- as.matrix(dist_bc)
-  openxlsx::write.xlsx(dist_mat,
-                       file = file.path(out_dir, "beta_diversity",
-                                        "distance_matrix.xlsx"),
-                       rowNames = TRUE)
+  openxlsx::write.xlsx(
+    dist_mat,
+    file = file.path(out_dir, "beta_diversity", "distance_matrix.xlsx"),
+    rowNames = TRUE
+  )
 
-  pcoa_res <- phiper:::compute_pcoa(dist_bc,
-                                    neg_correction = "none",
-                                    n_axes = 109)
+  pcoa_res <- phiper:::compute_pcoa(
+    dist_bc,
+    neg_correction = "none",
+    n_axes = 109
+  )
   saveRDS(pcoa_res, file.path(out_dir, "beta_diversity", "pcoa_results.rds"))
 
-  cap_res <- phiper:::compute_capscale(dist_bc,
-                                       ps = ps_cmp,
-                                       formula = ~ group_char)
+  cap_res <- phiper:::compute_capscale(
+    dist_bc,
+    ps = ps_cmp,
+    formula = ~ group_char
+  )
   saveRDS(cap_res, file.path(out_dir, "beta_diversity", "capscale_results.rds"))
 
-  permanova_res <- phiper:::compute_permanova(dist_bc,
-                                              ps = ps_cmp,
-                                              group_col = "group_char")
-  saveRDS(permanova_res, file.path(out_dir, "beta_diversity",
-                                   "permanova_results.rds"))
+  permanova_res <- phiper:::compute_permanova(
+    dist_bc,
+    ps = ps_cmp,
+    group_col = "group_char"
+  )
+  saveRDS(permanova_res, file.path(out_dir, "beta_diversity", "permanova_results.rds"))
 
-  disp_res <- phiper:::compute_dispersion(dist_bc,
-                                          ps = ps_cmp,
-                                          group_col = "group_char")
-  saveRDS(disp_res, file.path(out_dir, "beta_diversity",
-                              "dispersion_results.rds"))
-  print(disp_res)
+  disp_res <- phiper:::compute_dispersion(
+    dist_bc,
+    ps = ps_cmp,
+    group_col = "group_char"
+  )
+  saveRDS(disp_res, file.path(out_dir, "beta_diversity", "dispersion_results.rds"))
 
-  tsne_res <- phiper:::compute_tsne(ps = ps_cmp,
-                                    dist_obj = dist_bc,
-                                    dims = 2L,
-                                    perplexity = 15,
-                                    meta_cols = c("group_char"))
-  openxlsx::write.xlsx(tsne_res, file = file.path(out_dir,
-                                                  "beta_diversity",
-                                                  "tsne2d_results.xlsx"),
-                       rowNames = TRUE)
+  tsne_res <- phiper:::compute_tsne(
+    ps = ps_cmp,
+    dist_obj = dist_bc,
+    dims = 2L,
+    perplexity = min(15, length(disp_res$distances$sample_id) - 1),
+    meta_cols = c("group_char")
+  )
+  openxlsx::write.xlsx(
+    tsne_res,
+    file = file.path(out_dir, "beta_diversity", "tsne2d_results.xlsx"),
+    rowNames = TRUE
+  )
 
-  CairoSVG(file.path(out_dir, "beta_diversity", "tsne2d_plot.svg"), dpi = 300,
-           height = 30, width = 30, unit = "cm", bg = "white")
   p_tsne2d <- phiper:::plot_tsne(
     tsne_res %>% mutate(group_char = factor(group_char, levels = cmp)),
     view = "2d",
     colour = "group_char",
-    palette = phip_palette[1:2]
-  )
-  print(p_tsne2d)
-  dev.off()
+    palette = group_palette
+  ) +
+    theme(
+      text = element_text(size = 12),
+      legend.title = element_blank()
+    )
 
-  tsne_res <- phiper:::compute_tsne(ps = ps_cmp,
-                                    dist_obj = dist_bc,
-                                    dims = 3L,
-                                    perplexity = 20,
-                                    meta_cols = c("group_char"))
-  openxlsx::write.xlsx(tsne_res, file = file.path(out_dir,
-                                                  "beta_diversity",
-                                                  "tsne3d_results.xlsx"),
-                       rowNames = TRUE)
+  ggsave(
+    filename = file.path(out_dir, "beta_diversity", "tsne2d_plot.pdf"),
+    plot = p_tsne2d,
+    width = 9, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
+
+  tsne_res <- phiper:::compute_tsne(
+    ps = ps_cmp,
+    dist_obj = dist_bc,
+    dims = 3L,
+    perplexity = min(20, length(disp_res$distances$sample_id) - 1),
+    meta_cols = c("group_char")
+  )
+  openxlsx::write.xlsx(
+    tsne_res, 
+    file = file.path(out_dir, "beta_diversity", "tsne3d_results.xlsx"), 
+    rowNames = TRUE
+  )
 
   p3d <- phiper:::plot_tsne(
     tsne_res %>% mutate(group_char = factor(group_char, levels = cmp)),
     view = "3d",
     colour = "group_char",
-    palette = phip_palette[1:2]
+    palette = group_palette
   )
-  htmlwidgets::saveWidget(p3d, file = file.path(out_dir, "beta_diversity",
-                                                "tsne3d_plot.html"),
-                          selfcontained = TRUE)
+  htmlwidgets::saveWidget(
+    p3d,
+    file = file.path(out_dir, "beta_diversity", "tsne3d_plot.html"),
+    selfcontained = TRUE
+  )
 
   # Add group information to PCoA sample coordinates
   pcoa_res$sample_coords <- pcoa_res$sample_coords %>%
@@ -345,31 +399,53 @@ for (cmp in comparisons) {
         dplyr::distinct(),
       by = "sample_id",
       copy = TRUE
-    )
-  pcoa_res$sample_coords <- pcoa_res$sample_coords %>%
+    ) %>%
     mutate(group_char = factor(group_char, levels = cmp))
 
+  lab_perm <- paste0("PERMANOVA p = ", format_pval(permanova_res$p_adjust))
+  lab_disp <- paste0( "Dispersion   p = ", format_pval(disp_res$tests$p_adjust))
+  
   # PCoA plot with group centroids and ellipses
-  CairoSVG(file.path(out_dir, "beta_diversity", "pcoa_plot.svg"), dpi = 300,
-           height = 30, width = 30, unit = "cm", bg = "white")
   p_pcoa <- phiper:::plot_pcoa(
     pcoa_res,
     axes = c(1, 2),
     group_col = "group_char",
     ellipse_by = "group",
-    show_centroids = TRUE
+    show_centroids = TRUE,
+    point_size = 2
   ) +
-    scale_colour_manual(values = setNames(phip_palette[1:2], cmp))
-  print(p_pcoa)
-  dev.off()
-
+    scale_colour_manual(values = group_palette) +
+    theme(
+      text = element_text(size = 12),
+      legend.title = element_blank()
+      legend.position = "none"
+    ) +
+    annotate(
+      "text",
+      x = Inf,
+      y = -Inf,
+      label = paste(lab_perm, lab_disp, sep = "\n"),
+      hjust = 1,  # nudge left a bit
+      vjust = -0.2,  # nudge up a bit
+      size = 4
+    )
+  
+  ggsave(
+    filename = file.path(out_dir, "beta_diversity", "pcoa_plot.pdf"),
+    plot = p_pcoa,
+    width = 9, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
+  
   # Scree plot for first 15 axes of PCoA
-  CairoSVG(file.path(out_dir, "beta_diversity", "scree_plot.svg"), dpi = 300,
-           height = 30, width = 30, unit = "cm", bg = "white")
-  p_scree <- phiper:::plot_scree(pcoa_res, n_axes = 15, type = "line") +
-    theme()
-  print(p_scree)
-  dev.off()
+  p_scree <- phiper:::plot_scree(pcoa_res, n_axes = 15, type = "line")
+  
+  ggsave(
+    filename = file.path(out_dir, "beta_diversity", "scree_plot.pdf"),
+    plot = p_scree,
+    width = 9, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
 
   # Determine which contrast label actually exists in the dispersion object
   available_contrasts <- unique(disp_res$distances$contrast)
@@ -395,8 +471,6 @@ for (cmp in comparisons) {
   disp_res$distances <- disp_res$distances %>%
     mutate(level = factor(level, levels = cmp))
   
-  CairoSVG(file.path(out_dir, "beta_diversity", "dispersion_plot.svg"),
-           dpi = 300, height = 30, width = 30, unit = "cm", bg = "white")
   p_disp <- phiper:::plot_dispersion(
     disp_res,
     scope        = "group",
@@ -405,69 +479,58 @@ for (cmp in comparisons) {
     show_box     = TRUE,
     show_points  = TRUE
   ) +
-    scale_colour_manual(values = setNames(phip_palette[1:2], cmp)) +
-    scale_fill_manual(values = setNames(phip_palette[1:2], cmp))
+    scale_colour_manual(values = group_palette) +
+    scale_fill_manual(values = group_palette) +
+    theme(
+      text = element_text(size = 12),
+      axis.title.x = element_blank(),
+      legend.title = element_blank(),
+      legend.position = "none"
+    )
   
-  print(p_disp)
-  dev.off()
-
+  ggsave(
+    filename = file.path(out_dir, "beta_diversity", "dispersion_plot.pdf"),
+    plot = p_disp,
+    width = 12, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
+  
   # ----------------------------------------------------------------------------
   # POP framework
   # ----------------------------------------------------------------------------
   data_frameworks <- readRDS(file.path(out_dir, paste0(label_dir, "_data.rds")))
   data_frameworks$group_char <- factor(data_frameworks$group_char, levels = cmp)
-  peplib <- readRDS(file.path("results", "peptide_library.rds"))
+  peptide_library <- readRDS(file = file.path("results", "peptide_library.rds"))
 
-  extract_tbl <- function(obj) {
-    if (is.data.frame(obj)) {
-      return(tibble::as_tibble(obj))
-    }
-    for (nm in c("data", "table", "tbl", "df", "result", "results")) {
-      if (!is.null(obj[[nm]])) {
-        return(tibble::as_tibble(obj[[nm]]))
-      }
-    }
-    out <- try(tibble::as_tibble(obj), silent = TRUE)
-    if (!inherits(out, "try-error")) {
-      return(out)
-    }
-    out <- try(as.data.frame(obj), silent = TRUE)
-    if (!inherits(out, "try-error")) {
-      return(tibble::as_tibble(out))
-    }
-    stop("Cannot extract a data table from the POP result object.")
-  }
-
-  dir.create(file.path(out_dir, "POP_framework"), recursive = TRUE,
-             showWarnings = FALSE)
+  dir.create(file.path(out_dir, "POP_framework"), recursive = T, showWarnings = F)
   
-  pep_tbl_file <- file.path(out_dir, "POP_framework", "single_peptide.csv")
-  if(!file.exists(pep_tbl_file) | FORCE) {
-    prev_res_pep <- phiper::ph_prevalence_compare(
+  pep_tbl_rds <- file.path(out_dir, "POP_framework", "single_peptide.rds")
+  if(!file.exists(pep_tbl_rds) | FORCE) {
+    pep_tbl <- phiper::ph_prevalence_compare(
       x                 = data_frameworks,
       group_cols        = "group_char",
       rank_cols         = "peptide_id",
       compute_ratios_db = TRUE,
       parallel          = TRUE,
+      peptide_library   = peptide_library,
       collect           = TRUE
     )
-    pep_tbl <- extract_tbl(prev_res_pep)
-    write.csv(pep_tbl, pep_tbl_file)
+    saveRDS(pep_tbl, pep_tbl_rds)
   } else {
-    pep_tbl <- read.csv(pep_tbl_file)
+    pep_tbl <- readRDS(pep_tbl_rds)
   }
   
   ranks_tax <- c("phylum", "class", "order", "family", "genus", "species")
   
   rank_tbl_file <- file.path(out_dir, "POP_framework", "taxa_ranks.csv")
-  if(!file.exists(pep_tbl_file) | FORCE) {
+  if(!file.exists(rank_tbl_file) | FORCE) {
     prev_res_rank <- phiper::ph_prevalence_compare(
       x                 = data_frameworks,
       group_cols        = "group_char",
       rank_cols         = ranks_tax,
       compute_ratios_db = FALSE,
       parallel          = TRUE,
-      peptide_library   = peplib,
+      peptide_library   = peptide_library,
       collect           = TRUE
     )
     rank_tbl <- extract_tbl(prev_res_rank)
@@ -475,66 +538,118 @@ for (cmp in comparisons) {
   } else {
     rank_tbl <- read.csv(rank_tbl_file)
   }
-
-  ranks_combined <- c(ranks_tax, "peptide_id")
+  
   plots_dir <- file.path(out_dir, "POP_framework", "plots")
   dir.create(plots_dir, recursive = TRUE, showWarnings = FALSE)
-
-  for (rank_name in ranks_combined) {
-    rank_chr <- as.character(rank_name)
-    out_name <- file.path(plots_dir, rank_chr)
-    df_rank <- if (rank_chr == "peptide_id") {
-      pep_tbl
-    } else {
-      rank_tbl %>% filter(rank == rank_chr)
-    }
-    p_static <- scatter_static(
-      df   = df_rank,
-      rank = rank_chr,
-      xlab = df_rank$group1[1],
-      ylab = df_rank$group2[1],
-      color_by = "is_flagellum",
-      color_title = "Flagellins",
-      point_size       = 2,
-      jitter_width_pp  = 0.15,
-      jitter_height_pp = 0.15,
-      point_alpha      = 0.85,
-      font_size        = 12
+  
+  out_name <- file.path(plots_dir, "peptide_id")
+  
+  ## Flagellins scatter plot
+  # Apply filter
+  pep_tbl_prev10 <- pep_tbl %>% filter((prop1 + prop2 >= 0.1))
+  # Add peptide library
+  pep_tbl_peplib <- pep_tbl_prev10 %>%
+    left_join(
+      peptide_library,
+      by = c("feature" = "peptide_id")
+    )
+  # MW test
+  pval_mw <- wilcox.test(ratio ~ is_bac_flagella, data = pep_tbl_peplib)$p.value
+  
+  # Removing datapoints where is_flagellum is NA, so NAs won't be plotted
+  # Alternatively could set NAs to FALSE in peptide_library to plot NAs too
+  keep_flag <- peptide_library %>% filter(!is.na(is_bac_flagella))
+  pep_tbl_flag <- pep_tbl_prev10 %>% filter(feature %in% keep_flag$peptide_id)
+  
+  p_static <- scatter_static(
+    df = pep_tbl_flag,
+    rank = "peptide_id",
+    xlab = pep_tbl$group1[1],
+    ylab = pep_tbl$group2[1],
+    color_by = "is_bac_flagella",
+    color_title = paste0("Flagellins (p = ", format_pval(pval_mw), ")"),
+    point_size = 2,
+    point_alpha = 0,
+    font_size = 12
+  ) +
+    coord_cartesian(xlim = c(-2, 102), ylim = c(-2, 102), expand = TRUE) +
+    theme(
+      plot.margin = grid::unit(c(12, 12, 12, 12), "pt"),
+      text = element_text(family = "Montserrat")
     ) +
-      ggplot2::coord_cartesian(xlim = c(-2, 102), ylim = c(-2, 102),
-                               expand = TRUE) +
-      ggplot2::theme(
-        plot.margin = grid::unit(c(12, 12, 12, 12), "pt"),
-        text        = ggplot2::element_text(family = "Montserrat")
-      )
-    ggsave(paste0(out_name, "_static.svg"), p_static, dpi = 300,
-           height = 30, width = 30, unit = "cm", bg = "white")
-
-    p_inter <- scatter_interactive(
-      df   = df_rank,
-      rank = rank_chr,
-      xlab = df_rank$group1[1],
-      ylab = df_rank$group2[1],
-      peplib = peplib,
-      point_size = 10,
-      jitter_width_pp  = 0.25,
-      jitter_height_pp = 0.25,
-      point_alpha = 0.85,
-      font_size = 12
+    scale_colour_manual(values = c(phip_palette[20], phip_palette[22]))
+  
+  p_static$data <- p_static$data %>%
+    mutate(pt_size = if_else(is_bac_flagella == "yes", 2, 1)) %>%
+    arrange(is_bac_flagella)
+  
+  p_static <- p_static +
+    geom_point(
+      data = p_static$data,
+      aes(x = percent1, y = percent2, colour = is_bac_flagella, size = pt_size),
+      alpha = 0.5,
+      inherit.aes = FALSE
+    ) + 
+    scale_size_identity()
+  
+  ggsave(
+    filename = file.path(paste0(out_name, "_static.pdf")),
+    plot = p_static,
+    width = 18, height = 18, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
+  
+  # ----------------------------------------------------------------------------
+  # DELTA framework
+  # ----------------------------------------------------------------------------
+  dir.create(file.path(out_dir, "DELTA_framework"), recursive = T, showWarnings = F)
+  
+  data_frameworks$subject_id <- data_frameworks$sample_id
+  peptide_library[] <- lapply(peptide_library, as.character)
+  log_file_current <- if (is.null(LOG_FILE)) {
+    file.path(out_dir, "DELTA_framework", "log.txt")
+  } else {
+    LOG_FILE
+  }
+  
+  delta_file <- file.path(out_dir, "DELTA_framework", "delta_table.csv")
+  if(!file.exists(delta_file) | FORCE) {
+    res <- phiper::compute_delta(
+      x = data_frameworks,
+      exist_col = "exist",
+      rank_cols = c(
+        "phylum", "class", "order", "family", "genus", "species",
+        "is_auto", "is_infect", "is_EBV", "is_toxin", "is_PNP", "is_EM",
+        "is_MPA", "is_patho", "is_probio", "is_IgA", "is_bac_flagella",
+        "is_allergens"
+      ),
+      group_cols          = "group_char",
+      peptide_library     = peptide_library,
+      B_permutations      = 150000L,
+      smooth_eps_num      = 0.5,
+      smooth_eps_den_mult = 2.0,
+      min_max_prev        = 0.0,
+      weight_mode         = "n_eff_sqrt",
+      stat_mode           = "asin",
+      prev_strat          = "none",
+      winsor_z            = Inf,
+      rank_feature_keep   = list(
+        phylum  = NULL, class = NULL, order = NULL, family = NULL, genus = NULL,
+        species = NULL,
+        is_auto = "TRUE", is_infect = "TRUE", is_EBV = "TRUE", is_toxin = "TRUE",
+        is_PNP = "TRUE", is_EM = "TRUE", is_MPA  = "TRUE", is_patho = "TRUE", 
+        is_probio = "TRUE", is_IgA = "TRUE", is_bac_flagella = "yes", 
+        is_allergens = "TRUE"
+      ),
+      log                 = LOG,
+      log_file            = log_file_current,
+      fold_change         = "sum",
+      cross_prev          = "mean"
     )
-
-    p_inter <- plotly::layout(
-      p_inter,
-      autosize = TRUE,
-      margin   = list(l = 70, r = 30, t = 10, b = 70),
-      xaxis    = list(range = c(-2, 102), automargin = TRUE),
-      yaxis    = list(range = c(-2, 102), automargin = TRUE)
-    )
-    htmlwidgets::saveWidget(
-      p_inter,
-      file = paste0(out_name, "_interactive.html"),
-      selfcontained = TRUE
-    )
+    res <- as.data.frame(res)
+    write.csv(res, file = delta_file)
+  } else {
+    res <- read.csv(delta_file)
   }
 }
 
