@@ -97,8 +97,9 @@ metadata_all <- metadata
 
 # This sample appears twice with completely different metadata
 # Need to double-check with collaborators
-# Remove for now
-metadata <- metadata %>% filter(LV_code != "LV1016273557")
+# MVCC011 T3 doesn't correlate with T1+T2, so I assume it's the other patient
+metadata <- metadata %>%
+  filter(!(LV_code == "LV1016273557" & patientid == "MVCC011"))
 
 ## ---------------------------- JOIN DATA --------------------------------------
 # Retain only samples present in both the assay data and metadata.
