@@ -8,3 +8,5 @@ renv.lock
 renv/
 data/
 results/
+logs/
+**/*.html
