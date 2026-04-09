@@ -125,16 +125,10 @@ samples_meta <- metadata %>%
   ) %>%
   relocate(Sex, Age, .after = last_col())
 
-# Make peptide metadata compatible with downstream analysis
+# Make peptide metadata compatible with downstream analysis (R and Python)
 peplib <- peplib %>%
   rename(peptide_id = oligo) %>%
-  mutate(
-    is_bac_flagella = case_when(
-      is_bac_flagella == FALSE ~ "no",
-      is_bac_flagella == TRUE ~ "yes",
-      TRUE ~ NA
-    )
-  ) %>%
+  mutate(across(where(is.logical), as.integer)) %>%
   left_join(
     peplib_vogl %>%
       select(peptide_id, phylum, class, order, family, genus, species),
