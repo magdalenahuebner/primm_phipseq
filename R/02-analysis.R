@@ -335,62 +335,6 @@ for (cmp in comparisons) {
   )
   saveRDS(disp_res, file.path(out_dir, "beta_diversity", "dispersion_results.rds"))
 
-  tsne_res <- phiper:::compute_tsne(
-    ps = ps_cmp,
-    dist_obj = dist_bc,
-    dims = 2L,
-    perplexity = min(15, length(disp_res$distances$sample_id) - 1),
-    meta_cols = c("group_char")
-  )
-  openxlsx::write.xlsx(
-    tsne_res,
-    file = file.path(out_dir, "beta_diversity", "tsne2d_results.xlsx"),
-    rowNames = TRUE
-  )
-
-  p_tsne2d <- phiper:::plot_tsne(
-    tsne_res %>% mutate(group_char = factor(group_char, levels = cmp)),
-    view = "2d",
-    colour = "group_char",
-    palette = group_palette
-  ) +
-    theme(
-      text = element_text(size = 12),
-      legend.title = element_blank()
-    )
-
-  ggsave(
-    filename = file.path(out_dir, "beta_diversity", "tsne2d_plot.pdf"),
-    plot = p_tsne2d,
-    width = 9, height = 9, units = "cm",
-    device = cairo_pdf, bg = "white"
-  )
-
-  tsne_res <- phiper:::compute_tsne(
-    ps = ps_cmp,
-    dist_obj = dist_bc,
-    dims = 3L,
-    perplexity = min(20, length(disp_res$distances$sample_id) - 1),
-    meta_cols = c("group_char")
-  )
-  openxlsx::write.xlsx(
-    tsne_res, 
-    file = file.path(out_dir, "beta_diversity", "tsne3d_results.xlsx"), 
-    rowNames = TRUE
-  )
-
-  p3d <- phiper:::plot_tsne(
-    tsne_res %>% mutate(group_char = factor(group_char, levels = cmp)),
-    view = "3d",
-    colour = "group_char",
-    palette = group_palette
-  )
-  htmlwidgets::saveWidget(
-    p3d,
-    file = file.path(out_dir, "beta_diversity", "tsne3d_plot.html"),
-    selfcontained = TRUE
-  )
-
   # Add group information to PCoA sample coordinates
   pcoa_res$sample_coords <- pcoa_res$sample_coords %>%
     dplyr::left_join(
@@ -417,7 +361,7 @@ for (cmp in comparisons) {
     scale_colour_manual(values = group_palette) +
     theme(
       text = element_text(size = 12),
-      legend.title = element_blank()
+      legend.title = element_blank(),
       legend.position = "none"
     ) +
     annotate(
@@ -447,54 +391,6 @@ for (cmp in comparisons) {
     device = cairo_pdf, bg = "white"
   )
 
-  # Determine which contrast label actually exists in the dispersion object
-  available_contrasts <- unique(disp_res$distances$contrast)
-
-  # Preferred pairwise label: var1 vs var2 (e.g. "control vs MCI")
-  pair_contrast <- paste(var1, "vs", var2)
-
-  if (pair_contrast %in% available_contrasts) {
-    contrast_to_use <- pair_contrast
-  } else if ("<global>" %in% available_contrasts) {
-    # fallback: use global dispersion if pairwise distances are not stored
-    contrast_to_use <- "<global>"
-  } else {
-    # last resort: just take the first available contrast and warn
-    contrast_to_use <- available_contrasts[1]
-    message(
-      "Warning: requested contrast '", pair_contrast,
-      "' not found in disp_res$distances$contrast. Using '",
-      contrast_to_use, "' instead."
-    )
-  }
-
-  disp_res$distances <- disp_res$distances %>%
-    mutate(level = factor(level, levels = cmp))
-  
-  p_disp <- phiper:::plot_dispersion(
-    disp_res,
-    scope        = "group",
-    contrast     = contrast_to_use,
-    show_violin  = TRUE,
-    show_box     = TRUE,
-    show_points  = TRUE
-  ) +
-    scale_colour_manual(values = group_palette) +
-    scale_fill_manual(values = group_palette) +
-    theme(
-      text = element_text(size = 12),
-      axis.title.x = element_blank(),
-      legend.title = element_blank(),
-      legend.position = "none"
-    )
-  
-  ggsave(
-    filename = file.path(out_dir, "beta_diversity", "dispersion_plot.pdf"),
-    plot = p_disp,
-    width = 12, height = 9, units = "cm",
-    device = cairo_pdf, bg = "white"
-  )
-  
   # ----------------------------------------------------------------------------
   # POP framework
   # ----------------------------------------------------------------------------
