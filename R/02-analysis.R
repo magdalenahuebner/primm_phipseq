@@ -589,7 +589,58 @@ for (cmp in comparisons) {
   ggsave(
     filename = file.path(paste0(out_name, "_static.pdf")),
     plot = p_static,
-    width = 18, height = 18, units = "cm",
+    width = 9, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
+  
+  ## Boxplot - peptide categories (each dot = peptide)
+  # Remove outliers for plotting (nicer plots)
+  pep_tbl_peplib_long <- pep_tbl_peplib_long %>%
+    group_by(family_lab) %>%
+    filter(!ratio %in% boxplot.stats(ratio)$out)
+  
+  # Stacked y positions so brackets don't overlap
+  max_y <- max(pep_tbl_peplib_long$ratio, na.rm = TRUE)
+  pdat <- pval_mw_df %>%
+    filter(group1 == "Flagellins" | group2 == "Flagellins") %>%
+    mutate(y.position = max_y * (1 + 0.1 * row_number()))
+  
+  # Boxplot (each dot = peptide)
+  p_pep_box <- ggplot(pep_tbl_peplib_long, aes(x = family_lab, y = ratio, fill = family_lab)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+    scale_fill_manual(values = oligo_palette) +
+    stat_pvalue_manual(
+      pdat,
+      label = "p.signif",
+      xmin = "group1",
+      xmax = "group2",
+      y.position = "y.position",
+      tip.length = 0.01
+    ) +
+    coord_cartesian(ylim = c(0, 6)) +
+    labs(
+      title = paste0(
+        "Ratios of antibody responses by oligo family ", label_dir,
+        " (", N1, ", ", N2, ")"
+      ),
+      x = NULL, 
+      y = paste0("Ratios of antibody responses")
+    ) +
+    theme_bw(12) +
+    theme(
+      text = element_text(size = 12, family = "Montserrat"),
+      title = element_text(size = 10),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "none",
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+    )
+  
+  ggsave(
+    filename = file.path(paste0(out_name, "_pep_box.pdf")),
+    plot = p_pep_box,
+    width = 18, height = 9, units = "cm",
     device = cairo_pdf, bg = "white"
   )
   
