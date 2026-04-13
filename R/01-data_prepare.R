@@ -72,6 +72,7 @@ metadata <- metadata %>%
   ) %>%
   filter(group_value != "") %>%
   mutate(
+    timepoint = paste0("T", as.integer(sub("T", "", timepoint)) - 1),
     group = if_else(
       group_type == "response",
       paste(group_value, timepoint, sep = "_"),
@@ -89,8 +90,8 @@ metadata <- metadata %>%
   ) %>%
   mutate(response = if_else(PFS12 == "yes", "R", "NR")) %>%
   relocate(response, .before = "timepoint") %>%
-  relocate(paste0("R_T", 1:4), .after = "age") %>%
-  relocate(paste0("NR_T", 1:4), .after = "R_T4")
+  relocate(paste0("R_T", 0:3), .after = "age") %>%
+  relocate(paste0("NR_T", 0:3), .after = "R_T3")
   
 # Preserve the unfiltered encoded metadata for manual review.
 metadata_all <- metadata
