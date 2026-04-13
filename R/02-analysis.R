@@ -696,6 +696,7 @@ for (cmp in comparisons) {
     write.csv(res, file = delta_file)
   } else {
     res <- read.csv(delta_file)
+    }
   }
 }
 
