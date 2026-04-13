@@ -119,14 +119,45 @@ saveRDS(peptide_library, file = file.path("results", "peptide_library.rds"))
 # Analysis setup
 # ------------------------------------------------------------------------------
 # List of comparisons (each entry is a pair of group labels)
-comparisons <- list(
+comp_main <- list(
+  c("R_T0", "NR_T0"),
   c("R_T1", "NR_T1"),
   c("R_T2", "NR_T2"),
   c("R_T3", "NR_T3"),
-  c("R_T4", "NR_T4"),
-  c("R_T1", "R_T2"),
-  c("NR_T1", "NR_T2")
+  c("R_T0", "R_T1"),
+  c("NR_T0", "NR_T1")
 )
+
+# Add more comparisons:
+# Vector of group variables and timepoints
+group_vars <- c("ORR", "toxicity", "colitis", "combiIO", "antibiotics", "ppi")
+timepoints <- c("T0", "T1","T2","T3")
+levels2 <- c("yes","no")
+
+# All group labels that to consider
+labs <- expand_grid(
+  group_type = group_vars,
+  group_value = levels2,
+  timepoint = timepoints
+) %>%
+  mutate(lab = str_c(group_type, group_value, timepoint, sep = "_"))
+
+# 1) within-timepoint: yes vs no
+cmp_within <- labs %>%
+  select(group_type, group_value, timepoint, lab) %>%
+  pivot_wider(names_from = group_value, values_from = lab) %>%
+  transmute(cmp = map2(yes, no, c))
+
+# Leave for now, maybe add back later for supplementary figures?
+# # 2) across-timepoint within level: yes_Ti vs yes_Tj AND no_Ti vs no_Tj
+# cmp_across <- labs %>%
+#   group_by(group_type, group_value) %>%
+#   summarise(cmp = list(combn(lab, 2, simplify = FALSE)), .groups = "drop") %>%
+#   unnest(cmp)
+# comp_add <- c(cmp_within$cmp, cmp_across$cmp)
+# comparisons <- c(comp_main, comp_add)
+
+comparisons <- c(comp_main, cmp_within)
 
 # Columns that are always retained when exporting data
 base_cols <- c("sample_id", "peptide_id", "group_char", "exist")
@@ -134,7 +165,15 @@ base_cols <- c("sample_id", "peptide_id", "group_char", "exist")
 # Colours scheme for plotting
 labels <- unique(unlist(comparisons))
 group_palette <- setNames(
-  ifelse(grepl("NR_", labels), phip_palette[9], phip_palette[1]),
+  ifelse(
+    grepl("(^|_)NR(_|$)|(^|_)no(_|$)", labels),
+    phip_palette[9],
+    ifelse(
+      grepl("(^|_)R(_|$)|(^|_)yes(_|$)", labels),
+      phip_palette[1],
+      NA_character_
+    )
+  ),
   labels
 )
 
@@ -495,6 +534,7 @@ for (cmp in comparisons) {
     device = cairo_pdf, bg = "white"
   )
   
+  if (any(vapply(comp_main, identical, logical(1), cmp))) {
   # ----------------------------------------------------------------------------
   # DELTA framework
   # ----------------------------------------------------------------------------
