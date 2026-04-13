@@ -479,17 +479,76 @@ for (cmp in comparisons) {
   
   out_name <- file.path(plots_dir, "peptide_id")
   
-  ## Flagellins scatter plot
+  # ----------------------------------------------------------------------------
+  # MW test (all categories)
+  # ----------------------------------------------------------------------------
   # Apply filter
   pep_tbl_prev10 <- pep_tbl %>% filter((prop1 + prop2 >= 0.1))
+  
   # Add peptide library
   pep_tbl_peplib <- pep_tbl_prev10 %>%
     left_join(
       peptide_library,
       by = c("feature" = "peptide_id")
-    )
-  # MW test
-  pval_mw <- wilcox.test(ratio ~ is_bac_flagella, data = pep_tbl_peplib)$p.value
+    ) %>%
+    mutate(is_library = TRUE)
+
+  N1 <- unique(pep_tbl_peplib$N1)
+  N2 <- unique(pep_tbl_peplib$N2)
+  
+  # Prepare long format for boxplots by annotation
+  family_cols <- c(
+    "is_library"       = "Complete library",
+    "is_MPA"           = "Microbiome",
+    "is_patho"         = "Pathogenic strains",
+    "is_IgA"           = "IgA",
+    "is_probio"        = "Probiotic",
+    "is_bac_flagella"  = "Flagellins",
+    "is_infect"        = "VFDB",
+    "is_phage"         = "Phages",
+    "is_allergens"     = "Allergens",
+    "is_IEDB_or_cntrl" = "IEDB controls"
+  )
+  
+  pep_tbl_peplib_long <- pep_tbl_peplib %>%
+    select(feature, ratio, all_of(names(family_cols))) %>%
+    pivot_longer(
+      cols = all_of(names(family_cols)),
+      names_to = "family",
+      values_to = "present"
+    ) %>%
+    filter(present == 1) %>%
+    mutate(family_lab = factor(family_cols[family], levels = family_cols))
+  
+  # Set colours
+  oligo_palette <- c(
+    "Complete library"   = "#9467bd",
+    "Microbiome"         = "#ff9896",
+    "Pathogenic strains" = "#d62728",
+    "IgA"                = "#8c564b",
+    "Probiotic"          = "#98df8a",
+    "Flagellins"         = "#2ca02c",
+    "VFDB"               = "#e377c2",
+    "Phages"             = "#bcbd22",
+    "Allergens"          = "#17becf",
+    "IEDB controls"      = "#7f7f7f"
+  )
+  
+  # MW test (all categories)
+  pval_mw_df <- compare_means(
+    ratio ~ family_lab,
+    data = pep_tbl_peplib_long,
+    method = "wilcox.test",
+    p.adjust.method = "bonferroni"
+  )
+  pval_mw_file <- file.path(out_dir, "POP_framework", "pval_mw_df.csv")
+  write.csv(pval_mw_df, file = pval_mw_file)
+  
+  ## Flagellins scatter plot
+  # Extract adjusted p-value
+  pval_mw <- pval_mw_df %>% 
+    filter(group1 == "Complete library", group2 == "Flagellins") %>%
+    pull(p.adj)
   
   # Removing datapoints where is_flagellum is NA, so NAs won't be plotted
   # Alternatively could set NAs to FALSE in peptide_library to plot NAs too
