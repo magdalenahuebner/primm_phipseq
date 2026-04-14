@@ -306,8 +306,9 @@ for (cmp in comparisons) {
         pv,
         label = "p",
         y.position = "y.position",
+        vjust = -0.3,  # increase space between bracket and text
         tip.length = 0.02,
-        label.size = 4,
+        label.size = 4.23,
         family = "Montserrat"
       ) +
       scale_fill_manual(values = group_palette) +
@@ -315,9 +316,16 @@ for (cmp in comparisons) {
       theme(
         text = element_text(size = 12),
         axis.title.x = element_blank(),
+        axis.title.y = element_text(face = "plain"),
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
+        plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
       )
+    
+    if (m == "richness") {
+      p_alpha <- p_alpha + labs(y = "# of significantly bound peptides")
+    }
+    
     p_alpha
   })
   p_alpha <- wrap_plots(p_alpha)
@@ -353,13 +361,6 @@ for (cmp in comparisons) {
   )
   saveRDS(pcoa_res, file.path(out_dir, "beta_diversity", "pcoa_results.rds"))
 
-  cap_res <- phiper:::compute_capscale(
-    dist_bc,
-    ps = ps_cmp,
-    formula = ~ group_char
-  )
-  saveRDS(cap_res, file.path(out_dir, "beta_diversity", "capscale_results.rds"))
-
   permanova_res <- phiper:::compute_permanova(
     dist_bc,
     ps = ps_cmp,
@@ -393,15 +394,21 @@ for (cmp in comparisons) {
     pcoa_res,
     axes = c(1, 2),
     group_col = "group_char",
-    ellipse_by = "group",
+    show_ellipses = FALSE,
     show_centroids = TRUE,
     point_size = 2
   ) +
+    stat_ellipse(
+      aes(group = group_char),
+      colour = "grey70",
+      linetype = "dashed"
+    ) +
     scale_colour_manual(values = group_palette) +
     theme(
       text = element_text(size = 12),
       legend.title = element_blank(),
-      legend.position = "none"
+      axis.title = element_text(face = "plain"),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
     ) +
     annotate(
       "text",
@@ -410,12 +417,20 @@ for (cmp in comparisons) {
       label = paste(lab_perm, lab_disp, sep = "\n"),
       hjust = 1,  # nudge left a bit
       vjust = -0.2,  # nudge up a bit
-      size = 4
+      size = 4.23
     )
+  
+  p_pcoa_noleg <- p_pcoa + theme(legend.position = "none")
   
   ggsave(
     filename = file.path(out_dir, "beta_diversity", "pcoa_plot.pdf"),
     plot = p_pcoa,
+    width = 9, height = 9, units = "cm",
+    device = cairo_pdf, bg = "white"
+  )
+  ggsave(
+    filename = file.path(out_dir, "beta_diversity", "pcoa_plot_noleg.pdf"),
+    plot = p_pcoa_noleg,
     width = 9, height = 9, units = "cm",
     device = cairo_pdf, bg = "white"
   )
@@ -521,7 +536,7 @@ for (cmp in comparisons) {
     mutate(family_lab = factor(family_cols[family], levels = family_cols))
   
   # Set colours
-  oligo_palette <- c(
+  peptide_palette <- c(
     "Complete library"   = "#9467bd",
     "Microbiome"         = "#ff9896",
     "Pathogenic strains" = "#d62728",
@@ -555,36 +570,68 @@ for (cmp in comparisons) {
   keep_flag <- peptide_library %>% filter(!is.na(is_bac_flagella))
   pep_tbl_flag <- pep_tbl_prev10 %>% filter(feature %in% keep_flag$peptide_id)
   
+  legend_lab <- paste0("Flagellins (p = ", format_pval(pval_mw), ")")
+  
   p_static <- scatter_static(
     df = pep_tbl_flag,
     rank = "peptide_id",
     xlab = pep_tbl$group1[1],
     ylab = pep_tbl$group2[1],
     color_by = "is_bac_flagella",
-    color_title = paste0("Flagellins (p = ", format_pval(pval_mw), ")"),
+    color_title = NULL,
     point_size = 2,
     point_alpha = 0,
     font_size = 12
   ) +
     coord_cartesian(xlim = c(-2, 102), ylim = c(-2, 102), expand = TRUE) +
     theme(
-      plot.margin = grid::unit(c(12, 12, 12, 12), "pt"),
-      text = element_text(family = "Montserrat")
+      text = element_text(size = 12, family = "Montserrat"),
+      legend.position = c(0, 1), 
+      legend.justification = c("left", "top"), 
+      legend.title = element_blank(),
+      axis.title = element_text(face = "plain"),
+      legend.text = element_text(size = 12),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
     ) +
-    scale_colour_manual(values = c(phip_palette[20], phip_palette[22]))
+    labs(
+      x = paste0(
+        "% of ", var1, " with a peptide \nsignificantly bound ",
+        "(n = ", N1, ")"
+      ),
+      y = paste0(
+        "% of ", var2, " with a peptide \nsignificantly bound ",
+        "(n = ", N2, ")"
+      )
+    )
   
   p_static$data <- p_static$data %>%
-    mutate(pt_size = if_else(is_bac_flagella == "yes", 2, 1)) %>%
-    arrange(is_bac_flagella)
-  
+    mutate(
+      pt_size = if_else(is_bac_flagella == 1, 2, 1),
+      legend_group = if_else(is_bac_flagella == 1, legend_lab, NA_character_)
+    )
+
   p_static <- p_static +
     geom_point(
-      data = p_static$data,
-      aes(x = percent1, y = percent2, colour = is_bac_flagella, size = pt_size),
+      data = p_static$data %>% filter(is_bac_flagella != 1),
+      aes(x = percent1, y = percent2),
+      colour = "grey70",
+      size = 1.2,
+      alpha = 0.5,
+      inherit.aes = FALSE,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      data = p_static$data %>% filter(is_bac_flagella == 1),
+      aes(x = percent1, y = percent2, colour = legend_group),
+      size = 2,
       alpha = 0.5,
       inherit.aes = FALSE
-    ) + 
-    scale_size_identity()
+    ) +
+    scale_colour_manual(
+      values = c(setNames(peptide_palette[["Flagellins"]], legend_lab))
+    ) +
+    scale_size_identity() +
+    guides(colour = guide_legend(override.aes = list(size = 2.5, alpha = 0.5)))
   
   ggsave(
     filename = file.path(paste0(out_name, "_static.pdf")),
@@ -601,40 +648,61 @@ for (cmp in comparisons) {
   
   # Stacked y positions so brackets don't overlap
   max_y <- max(pep_tbl_peplib_long$ratio, na.rm = TRUE)
+
+  # Keep factor order exactly as used in the plot
+  x_levels <- levels(factor(pep_tbl_peplib_long$family_lab))
+  flag_pos <- match("Flagellins", x_levels)
+
+  # Build p-value table for only comparisons involving Flagellins
   pdat <- pval_mw_df %>%
     filter(group1 == "Flagellins" | group2 == "Flagellins") %>%
-    mutate(y.position = max_y * (1 + 0.1 * row_number()))
-  
+    mutate(
+      other_group = if_else(group1 == "Flagellins", group2, group1),
+      other_pos   = match(other_group, x_levels),
+      side        = if_else(other_pos < flag_pos, "left", "right"),
+      dist        = abs(other_pos - flag_pos)
+    ) %>%
+    # Make sure xmin is always the left category and xmax the right category
+    mutate(
+      xmin = if_else(other_pos < flag_pos, other_group, "Flagellins"),
+      xmax = if_else(other_pos < flag_pos, "Flagellins", other_group)
+    ) %>%
+    # Alternate left/right from inside to outside
+    arrange(dist, factor(side, levels = c("left", "right"))) %>%
+    mutate(
+      y.position = max_y * (1 + 0.11 * row_number())
+    )
+
   # Boxplot (each dot = peptide)
   p_pep_box <- ggplot(pep_tbl_peplib_long, aes(x = family_lab, y = ratio, fill = family_lab)) +
     geom_boxplot(outlier.shape = NA) +
     geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
-    scale_fill_manual(values = oligo_palette) +
+    scale_fill_manual(values = peptide_palette) +
     stat_pvalue_manual(
       pdat,
       label = "p.signif",
-      xmin = "group1",
-      xmax = "group2",
+      xmin = "xmin",
+      xmax = "xmax",
       y.position = "y.position",
-      tip.length = 0.01
+      tip.length = 0.02
     ) +
     coord_cartesian(ylim = c(0, 6)) +
     labs(
-      title = paste0(
-        "Ratios of antibody responses by oligo family ", label_dir,
-        " (", N1, ", ", N2, ")"
-      ),
       x = NULL, 
-      y = paste0("Ratios of antibody responses")
+      y = paste0(
+        "Antibody response ratios \nin ", label_dir,
+        " (", N1, ", ", N2, ")"
+      )
     ) +
-    theme_bw(12) +
+    theme_phip(12) +
     theme(
       text = element_text(size = 12, family = "Montserrat"),
-      title = element_text(size = 10),
       panel.grid.major = element_blank(),
       panel.grid.minor = element_blank(),
       legend.position = "none",
-      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.title = element_text(face = "plain"),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
     )
   
   ggsave(
@@ -645,57 +713,57 @@ for (cmp in comparisons) {
   )
   
   if (any(vapply(comp_main, identical, logical(1), cmp))) {
-  # ----------------------------------------------------------------------------
-  # DELTA framework
-  # ----------------------------------------------------------------------------
-  dir.create(file.path(out_dir, "DELTA_framework"), recursive = T, showWarnings = F)
-  
-  data_frameworks$subject_id <- data_frameworks$sample_id
-  peptide_library[] <- lapply(peptide_library, as.character)
-  log_file_current <- if (is.null(LOG_FILE)) {
-    file.path(out_dir, "DELTA_framework", "log.txt")
-  } else {
-    LOG_FILE
-  }
-  
-  delta_file <- file.path(out_dir, "DELTA_framework", "delta_table.csv")
-  if(!file.exists(delta_file) | FORCE) {
-    res <- phiper::compute_delta(
-      x = data_frameworks,
-      exist_col = "exist",
-      rank_cols = c(
-        "phylum", "class", "order", "family", "genus", "species",
-        "is_auto", "is_infect", "is_EBV", "is_toxin", "is_PNP", "is_EM",
-        "is_MPA", "is_patho", "is_probio", "is_IgA", "is_bac_flagella",
-        "is_allergens"
-      ),
-      group_cols          = "group_char",
-      peptide_library     = peptide_library,
-      B_permutations      = 150000L,
-      smooth_eps_num      = 0.5,
-      smooth_eps_den_mult = 2.0,
-      min_max_prev        = 0.0,
-      weight_mode         = "n_eff_sqrt",
-      stat_mode           = "asin",
-      prev_strat          = "none",
-      winsor_z            = Inf,
-      rank_feature_keep   = list(
-        phylum  = NULL, class = NULL, order = NULL, family = NULL, genus = NULL,
-        species = NULL,
-        is_auto = "TRUE", is_infect = "TRUE", is_EBV = "TRUE", is_toxin = "TRUE",
-        is_PNP = "TRUE", is_EM = "TRUE", is_MPA  = "TRUE", is_patho = "TRUE", 
-        is_probio = "TRUE", is_IgA = "TRUE", is_bac_flagella = "yes", 
-        is_allergens = "TRUE"
-      ),
-      log                 = LOG,
-      log_file            = log_file_current,
-      fold_change         = "sum",
-      cross_prev          = "mean"
-    )
-    res <- as.data.frame(res)
-    write.csv(res, file = delta_file)
-  } else {
-    res <- read.csv(delta_file)
+    # ----------------------------------------------------------------------------
+    # DELTA framework
+    # ----------------------------------------------------------------------------
+    dir.create(file.path(out_dir, "DELTA_framework"), recursive = T, showWarnings = F)
+    
+    data_frameworks$subject_id <- data_frameworks$sample_id
+    peptide_library[] <- lapply(peptide_library, as.character)
+    log_file_current <- if (is.null(LOG_FILE)) {
+      file.path(out_dir, "DELTA_framework", "log.txt")
+    } else {
+      LOG_FILE
+    }
+    
+    delta_file <- file.path(out_dir, "DELTA_framework", "delta_table.csv")
+    if(!file.exists(delta_file) | FORCE) {
+      res <- phiper::compute_delta(
+        x = data_frameworks,
+        exist_col = "exist",
+        rank_cols = c(
+          "phylum", "class", "order", "family", "genus", "species",
+          "is_auto", "is_infect", "is_EBV", "is_toxin", "is_PNP", "is_EM",
+          "is_MPA", "is_patho", "is_probio", "is_IgA", "is_bac_flagella",
+          "is_allergens"
+        ),
+        group_cols          = "group_char",
+        peptide_library     = peptide_library,
+        B_permutations      = 150000L,
+        smooth_eps_num      = 0.5,
+        smooth_eps_den_mult = 2.0,
+        min_max_prev        = 0.0,
+        weight_mode         = "n_eff_sqrt",
+        stat_mode           = "asin",
+        prev_strat          = "none",
+        winsor_z            = Inf,
+        rank_feature_keep   = list(
+          phylum  = NULL, class = NULL, order = NULL, family = NULL, genus = NULL,
+          species = NULL,
+          is_auto = "TRUE", is_infect = "TRUE", is_EBV = "TRUE", is_toxin = "TRUE",
+          is_PNP = "TRUE", is_EM = "TRUE", is_MPA  = "TRUE", is_patho = "TRUE", 
+          is_probio = "TRUE", is_IgA = "TRUE", is_bac_flagella = "yes", 
+          is_allergens = "TRUE"
+        ),
+        log                 = LOG,
+        log_file            = log_file_current,
+        fold_change         = "sum",
+        cross_prev          = "mean"
+      )
+      res <- as.data.frame(res)
+      write.csv(res, file = delta_file)
+    } else {
+      res <- read.csv(delta_file)
     }
   }
 }
