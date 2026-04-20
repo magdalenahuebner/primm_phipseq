@@ -157,7 +157,7 @@ cmp_within <- labs %>%
 # comp_add <- c(cmp_within$cmp, cmp_across$cmp)
 # comparisons <- c(comp_main, comp_add)
 
-comparisons <- c(comp_main, cmp_within)
+comparisons <- c(comp_main, cmp_within$cmp)
 
 # Columns that are always retained when exporting data
 base_cols <- c("sample_id", "peptide_id", "group_char", "exist")
@@ -506,7 +506,7 @@ for (cmp in comparisons) {
       peptide_library,
       by = c("feature" = "peptide_id")
     ) %>%
-    mutate(is_library = TRUE)
+    mutate(is_library = 1)
 
   N1 <- unique(pep_tbl_peplib$N1)
   N2 <- unique(pep_tbl_peplib$N2)
@@ -557,7 +557,7 @@ for (cmp in comparisons) {
     p.adjust.method = "bonferroni"
   )
   pval_mw_file <- file.path(out_dir, "POP_framework", "pval_mw_df.csv")
-  write.csv(pval_mw_df, file = pval_mw_file)
+  write.csv(pval_mw_df, file = pval_mw_file, row.names = FALSE)
   
   ## Flagellins scatter plot
   # Extract adjusted p-value
@@ -750,10 +750,10 @@ for (cmp in comparisons) {
         rank_feature_keep   = list(
           phylum  = NULL, class = NULL, order = NULL, family = NULL, genus = NULL,
           species = NULL,
-          is_auto = "TRUE", is_infect = "TRUE", is_EBV = "TRUE", is_toxin = "TRUE",
-          is_PNP = "TRUE", is_EM = "TRUE", is_MPA  = "TRUE", is_patho = "TRUE", 
-          is_probio = "TRUE", is_IgA = "TRUE", is_bac_flagella = "yes", 
-          is_allergens = "TRUE"
+          is_auto = "1", is_infect = "1", is_EBV = "1", is_toxin = "1",
+          is_PNP = "1", is_EM = "1", is_MPA  = "1", is_patho = "1", 
+          is_probio = "1", is_IgA = "1", is_bac_flagella = "1", 
+          is_allergens = "1"
         ),
         log                 = LOG,
         log_file            = log_file_current,
