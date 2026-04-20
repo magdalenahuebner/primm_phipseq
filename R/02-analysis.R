@@ -575,8 +575,8 @@ for (cmp in comparisons) {
   p_static <- scatter_static(
     df = pep_tbl_flag,
     rank = "peptide_id",
-    xlab = pep_tbl$group1[1],
-    ylab = pep_tbl$group2[1],
+    xlab = var1,
+    ylab = var2,
     color_by = "is_bac_flagella",
     color_title = NULL,
     point_size = 2,
@@ -674,7 +674,10 @@ for (cmp in comparisons) {
     )
 
   # Boxplot (each dot = peptide)
-  p_pep_box <- ggplot(pep_tbl_peplib_long, aes(x = family_lab, y = ratio, fill = family_lab)) +
+  p_pep_box <- ggplot(
+    pep_tbl_peplib_long, 
+    aes(x = family_lab, y = ratio, fill = family_lab)
+  ) +
     geom_boxplot(outlier.shape = NA) +
     geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
     scale_fill_manual(values = peptide_palette) +
@@ -690,7 +693,7 @@ for (cmp in comparisons) {
     labs(
       x = NULL, 
       y = paste0(
-        "Antibody response ratios \nin ", label_dir,
+        "Ratios of Ig response in \n", label_dir,
         " (", N1, ", ", N2, ")"
       )
     ) +
