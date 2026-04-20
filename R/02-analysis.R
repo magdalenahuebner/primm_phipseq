@@ -555,7 +555,10 @@ for (cmp in comparisons) {
     data = pep_tbl_peplib_long,
     method = "wilcox.test",
     p.adjust.method = "bonferroni"
-  )
+  ) %>%
+  rstatix::add_significance("p.adj") %>%
+  select(-p.format)
+  
   pval_mw_file <- file.path(out_dir, "POP_framework", "pval_mw_df.csv")
   write.csv(pval_mw_df, file = pval_mw_file, row.names = FALSE)
   
@@ -683,7 +686,7 @@ for (cmp in comparisons) {
     scale_fill_manual(values = peptide_palette) +
     stat_pvalue_manual(
       pdat,
-      label = "p.signif",
+      label = "p.adj.signif",
       xmin = "xmin",
       xmax = "xmax",
       y.position = "y.position",
