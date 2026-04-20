@@ -65,12 +65,12 @@ options(phiper.log.verbose = FALSE)
 group_palette <- c(
   # Responders
   "R" = phip_palette[1],
+  "R_T0" = phip_palette[1],
   "R_T1" = phip_palette[1],
-  "R_T2" = phip_palette[1],
   # Non-responders
   "NR" = phip_palette[9],
-  "NR_T1" = phip_palette[9],
-  "NR_T2" = phip_palette[9]
+  "NR_T0" = phip_palette[9],
+  "NR_T1" = phip_palette[9]
 )
 ```
 
@@ -98,13 +98,13 @@ meta <- read.csv(here("data/processed/", "metadata.csv")) %>%
 peplib <- readRDS(here("results", "peptide_library.rds"))
 
 # Alpha diversity
-alpha_div <- read.xlsx(here("results/R_T1_vs_NR_T1", "alpha_diversity", "table.xlsx"))
+alpha_div <- read.xlsx(here("results/R_T0_vs_NR_T0", "alpha_diversity", "table.xlsx"))
 
 # Beta diversity
 pcoa_res <- list()
 perm_res <- list()
 disp_res <- list()
-for(cmp in c("R_T1_vs_NR_T1", "R_T2_vs_NR_T2")) {
+for(cmp in c("R_T0_vs_NR_T0", "R_T1_vs_NR_T1")) {
   pcoa_res[[cmp]] <- readRDS(here("results", cmp, "beta_diversity", "pcoa_results.rds"))
   perm_res[[cmp]] <- readRDS(here("results", cmp, "beta_diversity", "permanova_results.rds"))
   disp_res[[cmp]] <- readRDS(here("results", cmp, "beta_diversity", "dispersion_results.rds"))
@@ -112,17 +112,26 @@ for(cmp in c("R_T1_vs_NR_T1", "R_T2_vs_NR_T2")) {
 
 # POP framework
 pep_tbl <- list()
-for(cmp in c("R_T1_vs_NR_T1", "R_T2_vs_NR_T2", "R_T1_vs_R_T2", "NR_T1_vs_NR_T2")) {
+pval_mw_df <- list()
+for(cmp in c(
+  "R_T0_vs_NR_T0", 
+  "R_T1_vs_NR_T1",
+  "R_T2_vs_NR_T2", 
+  "R_T3_vs_NR_T3",
+  "R_T0_vs_R_T1", 
+  "NR_T0_vs_NR_T1"
+)) {
   pep_tbl[[cmp]] <- readRDS(here("results", cmp, "POP_framework", "single_peptide.rds"))
+  pval_mw_df[[cmp]] <- read.csv(here("results", cmp, "POP_framework", "pval_mw_df.csv"))
 }
 pop_df <- read.csv(
-  here("results/R_T1_vs_NR_T1/POP_framework/taxa_ranks.csv"),
+  here("results/R_T0_vs_NR_T0/POP_framework/taxa_ranks.csv"),
   row.names = 1
 )
 
 # DELTA framework
 delta_df <- read.csv(
-  here("results/R_T1_vs_NR_T1/DELTA_framework/delta_table.csv"),
+  here("results/R_T0_vs_NR_T0/DELTA_framework/delta_table.csv"),
   row.names = 1
 )
 ```
@@ -130,13 +139,14 @@ delta_df <- read.csv(
 ```{r}
 # Survival data
 meta_surv <- read.csv(here("data/raw/mdat_baseline_survival.csv"))
+meta_surv_new <- read.csv(here("data/raw/meta_os.csv"))
 ```
 
 ```{r}
 # POP framework (other contrasts)
 # Vector of group variables and timepoints
-group_vars <- c("combiIO", "PFS12", "ORR", "toxicity", "colitis", "antibiotics", "ppi")
-timepoints <- c("T1","T2","T3","T4")
+group_vars <- c("ORR", "toxicity", "colitis", "combiIO", "antibiotics", "ppi")
+timepoints <- c("T0", "T1", "T2", "T3")
 levels2 <- c("yes","no")
 
 # All group labels that to consider
@@ -156,17 +166,13 @@ cmp_within <- labs %>%
   pivot_wider(names_from = group_value, values_from = lab) %>%
   transmute(cmp = map2(yes, no, c))
 
-# 2) across-timepoint within level: yes_Ti vs yes_Tj AND no_Ti vs no_Tj
-cmp_across <- labs %>%
-  group_by(group_type, group_value) %>%
-  summarise(cmp = list(combn(lab, 2, simplify = FALSE)), .groups = "drop") %>%
-  unnest(cmp)
-
-comp_xtra <- c(cmp_within$cmp, cmp_across$cmp)
+comp_xtra <- cmp_within$cmp
 pep_tbl_xtra <- list()
+pval_mw_df_xtra <- list()
 for(cmp_pair in comp_xtra) {
   cmp <- paste0(cmp_pair[1], "_vs_", cmp_pair[2])
-  pep_tbl_xtra[[cmp]] <- read.csv(here("results", cmp, "POP_framework", "single_peptide.csv"))
+  pep_tbl_xtra[[cmp]] <- readRDS(here("results", cmp, "POP_framework", "single_peptide.rds"))
+  pval_mw_df_xtra[[cmp]] <- read.csv(here("results", cmp, "POP_framework", "pval_mw_df.csv"))
 }
 ```
 
@@ -186,8 +192,35 @@ meta_all %>% filter(patientid == "MVCC011")
 meta_all %>% filter(patientid == "OL_3049")
 ```
 
+My suspicion is that the sample belongs to OL_3049 (T0). Because otherwise if
+it belonged to MVCC011 (T2) this sample should correlate with MVCC011 (T0 & T1)
+which is doesn't:
+
+```{r}
+checks <- c("T0_MVCC011", "T1_MVCC011", "T0_OL_3049")
+hmout_corr <- ps %>%
+  mutate(label = paste(timepoint, patientid, sep = "_")) %>%
+  filter(label %in% checks) %>%
+  select(peptide_id, fold_change, label) %>%
+  collect() %>%
+  pivot_wider(names_from = "label", values_from = "fold_change") %>% 
+  select(all_of(checks))
+
+ggpairs(
+  hmout_corr,
+  upper = list(continuous = wrap("cor", size = 4, use = "pairwise.complete.obs")),
+  lower = list(continuous = wrap("points", alpha = 0.3, size = 0.5)),
+  diag  = list(continuous = wrap("blankDiag"))
+) +
+  theme_bw()
+```
+
 Initially I removed this sample from the analysis.
 This is how the plots for Johannes grant were generated.
+
+```{r}
+# ps <- ps %>% filter(sample_id != "LV1016273557")
+```
 
 
 # Figure 1 {.tabset}
@@ -204,10 +237,10 @@ individual between groups.
 
 We could consider using a richness cutoff (e.g. 200)?
 
-```{r, fig.width=8, fig.height=4}
+```{r, fig.width=7, fig.height=3.5}
 # Alpha diversity plot (Richness + Shannon)
 metrics <- c("richness", "shannon_diversity")
-cmp_alpha <- c("R_T1", "NR_T1")
+cmp_alpha <- c("R_T0", "NR_T0")
 
 p_alpha <- lapply(metrics, function(m) {
   # Calculate and format p-values first
@@ -221,7 +254,7 @@ p_alpha <- lapply(metrics, function(m) {
       p = format_pval(p),
       y.position = max(alpha_div[[m]], na.rm = TRUE) * 1.1
     )
-  
+
   p_alpha <- phiper::plot_alpha_diversity(
     alpha_div,
     metric = m,
@@ -232,24 +265,28 @@ p_alpha <- lapply(metrics, function(m) {
       pv,
       label = "p",
       y.position = "y.position",
+      vjust = -0.3, # increase space between bracket and text
       tip.length = 0.02,
-      label.size = 4,
+      label.size = 4.23,
       family = "Montserrat"
     ) +
     scale_fill_manual(values = group_palette) +
-    coord_cartesian(clip = "off") + 
+    coord_cartesian(clip = "off") +
     theme(
       text = element_text(size = 12),
       axis.title.x = element_blank(),
+      axis.title.y = element_text(face = "plain"),
       panel.grid.major = element_blank(),
       panel.grid.minor = element_blank(),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
     )
-  
+
   if (m == "richness") {
     p_alpha <- p_alpha +
+      labs(y = "# of significantly bound peptides") +
       ggrepel::geom_text_repel(
-        data = alpha_div %>% filter(richness<200),
-        mapping = aes(label=sample_id),
+        data = alpha_div %>% filter(richness < 200),
+        mapping = aes(label = sample_id),
         size = 3,
         show.legend = FALSE
       )
@@ -280,10 +317,11 @@ is more dispersed than the other (significant dispersion test).
 **This was done with phiper**
 
 I can see 2 clusters at TP1, is this an experimental batch effect?
+--> Probably CMV
 
-```{r, fig.width=8, fig.height=4}
+```{r, fig.width=7, fig.height=3.5}
 # PCoA plots
-cmp_pcoa <- list(c("R_T1", "NR_T1"), c("R_T2", "NR_T2"))
+cmp_pcoa <- list(c("R_T0", "NR_T0"), c("R_T1", "NR_T1"))
 
 p_pcoa <- lapply(cmp_pcoa, function(cmp) {
   # Add group information to PCoA sample coordinates
@@ -303,25 +341,26 @@ p_pcoa <- lapply(cmp_pcoa, function(cmp) {
   lab_disp <- paste0( "Dispersion   p = ", format_pval(disp_res[[cmp_lab]]$tests$p_adjust))
 
   # PCoA plot with group centroids and ellipses
-  phiper:::plot_pcoa(
+  p_pcoa <- phiper:::plot_pcoa(
     pcoa_res[[cmp_lab]],
     axes = c(1, 2),
     group_col = "group_char",
-    ellipse_by = "group",
+    show_ellipses = FALSE,
     show_centroids = TRUE,
     point_size = 2
   ) +
+    stat_ellipse(
+      aes(group = group_char),
+      colour = "grey70",
+      linetype = "dashed"
+    ) +
     scale_colour_manual(values = group_palette) +
     theme(
       text = element_text(size = 12),
-      legend.title = element_blank()
-      # legend.position = "none"
-    ) +
-    ggrepel::geom_text_repel(
-      data = pcoa_res[[cmp_lab]]$sample_coords %>% filter(richness < 200),
-      mapping = aes(label=sample_id),
-      size = 3,
-      show.legend = FALSE
+      legend.title = element_blank(),
+      axis.title = element_text(face = "plain"),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt"),
+      legend.position = "none"
     ) +
     annotate(
       "text",
@@ -330,7 +369,7 @@ p_pcoa <- lapply(cmp_pcoa, function(cmp) {
       label = paste(lab_perm, lab_disp, sep = "\n"),
       hjust = 1,  # nudge left a bit
       vjust = -0.2,  # nudge up a bit
-      size = 4
+      size = 4.23
     )
 })
 
@@ -341,11 +380,15 @@ wrap_plots(p_pcoa)
 
 ```{r}
 # Specify timepoint comparisons
-timepoints <- paste0("T", 1:4)
+timepoints <- paste0("T", 0:3)
 tp_pairs <- combn(timepoints, 2, simplify = FALSE)
 cmp_corr <- c(
   lapply(tp_pairs, \(p) paste0("R_",  p)),
-  lapply(tp_pairs, \(p) paste0("NR_", p))
+  lapply(tp_pairs, \(p) paste0("NR_", p)),
+  list(
+    c("R_T0", "NR_T1"),
+    c("NR_T0", "R_T1")
+  )
 )
 ```
 
@@ -353,89 +396,128 @@ cmp_corr <- c(
 # Calculate correlation of fold changes between different timepoints
 cor_mat <- list()
 for (cmp in cmp_corr) {
-  
-  cmp_lab <- paste(cmp[[1]], "vs", cmp[[2]], sep = "_")
-  resp <- ifelse(str_starts(cmp[[1]], "NR"), "NR", "R")
-  tps <- str_extract(cmp, "T[0-9]+")
 
-  ps_sub <- ps %>%
-    filter(response == resp, timepoint %in% tps) %>%
-    select(sample_id, patientid, timepoint, peptide_id, fold_change, exist)
-  
+  cmp_lab <- paste(cmp[[1]], "vs", cmp[[2]], sep = "_")
+
+  resp1 <- ifelse(str_starts(cmp[[1]], "NR"), "NR", "R")
+  resp2 <- ifelse(str_starts(cmp[[2]], "NR"), "NR", "R")
+  tp1 <- str_extract(cmp[[1]], "T[0-9]+")
+  tp2 <- str_extract(cmp[[2]], "T[0-9]+")
+
+  ps_1 <- ps %>%
+    filter(response == resp1, timepoint == tp1) %>%
+    select(patientid, peptide_id, fold_change, exist)
+
+  ps_2 <- ps %>%
+    filter(response == resp2, timepoint == tp2) %>%
+    select(patientid, peptide_id, fold_change, exist)
+
   # Fold change matrices (Pearson)
-  mats_fc <- map(tps, function(tp) {
-    ps_sub %>%
-      filter(timepoint == tp) %>%
-      select(peptide_id, patientid, fold_change) %>%
-      distinct() %>%
-      arrange(patientid) %>%
-      pivot_wider(names_from = patientid, values_from = fold_change) %>%
-      collect() %>%
-      column_to_rownames("peptide_id") %>%
-      as.matrix()
-  })
-  names(mats_fc) <- tps
+  mat1_fc <- ps_1 %>%
+    distinct() %>%
+    arrange(patientid) %>%
+    collect() %>%
+    pivot_wider(
+      id_cols = peptide_id, 
+      names_from = patientid, 
+      values_from = fold_change
+    ) %>%
+    column_to_rownames("peptide_id") %>%
+    as.matrix()
+
+  mat2_fc <- ps_2 %>%
+    distinct() %>%
+    arrange(patientid) %>%
+    collect() %>%
+    pivot_wider(
+      id_cols = peptide_id, 
+      names_from = patientid, 
+      values_from = fold_change
+    ) %>%
+    column_to_rownames("peptide_id") %>%
+    as.matrix()
 
   # Exist matrices (Kulczynski)
-  mats_ex <- map(tps, function(tp) {
-    ps_sub %>%
-      filter(timepoint == tp) %>%
-      select(peptide_id, patientid, exist) %>%
-      distinct() %>%
-      arrange(patientid) %>%
-      pivot_wider(names_from = patientid, values_from = exist) %>%
-      collect() %>%
-      column_to_rownames("peptide_id") %>%
-      as.matrix()
-  })
-  names(mats_ex) <- tps
+  mat1_ex <- ps_1 %>%
+    distinct() %>%
+    arrange(patientid) %>%
+    collect() %>%
+    pivot_wider(
+      id_cols = peptide_id, 
+      names_from = patientid, 
+      values_from = exist
+    ) %>%
+    column_to_rownames("peptide_id") %>%
+    as.matrix()
 
-  # Align patients and peptides across both metrics
-  common_patients <- intersect(colnames(mats_fc[[1]]), colnames(mats_fc[[2]]))
-  common_patients <- sort(common_patients) # deterministic order
-  mats_fc <- map(mats_fc, ~ .x[, common_patients, drop = FALSE])
-  mats_ex <- map(mats_ex, ~ .x[, common_patients, drop = FALSE])
+  mat2_ex <- ps_2 %>%
+    distinct() %>%
+    arrange(patientid) %>%
+    collect() %>%
+    pivot_wider(
+      id_cols = peptide_id, 
+      names_from = patientid, 
+      values_from = exist
+    ) %>%
+    column_to_rownames("peptide_id") %>%
+    as.matrix()
 
-  common_peptides <- intersect(rownames(mats_fc[[1]]), rownames(mats_fc[[2]]))
-  mats_fc <- map(mats_fc, ~ .x[common_peptides, , drop = FALSE])
-  mats_ex <- map(mats_ex, ~ .x[common_peptides, , drop = FALSE])
+  # Align peptides across comparisons
+  common_peptides <- intersect(rownames(mat1_fc), rownames(mat2_fc))
+  mat1_fc <- mat1_fc[common_peptides, ]
+  mat2_fc <- mat2_fc[common_peptides, ]
+  mat1_ex <- mat1_ex[common_peptides, ]
+  mat2_ex <- mat2_ex[common_peptides, ]
 
   # Compute matrices
-  pearson <- cor(mats_fc[[1]], mats_fc[[2]], use = "pairwise.complete.obs")
-  kulc <- kulczynski_mat(mats_ex[[1]], mats_ex[[2]])
-  
+  pearson <- cor(mat1_fc, mat2_fc, use = "pairwise.complete.obs")
+  kulc <- kulczynski_mat(mat1_ex, mat2_ex)
+
   # Convert to long table
   pearson_df <- pearson %>%
     as.data.frame() %>%
-    rownames_to_column("pid_t1") %>%
-    pivot_longer(-pid_t1, names_to = "pid_t2", values_to = "pearson")
+    rownames_to_column("pid_t0") %>%
+    pivot_longer(-pid_t0, names_to = "pid_t1", values_to = "pearson")
   kulc_df <- kulc %>%
     as.data.frame() %>%
-    rownames_to_column("pid_t1") %>%
-    pivot_longer(-pid_t1, names_to = "pid_t2", values_to = "kulczynski")
+    rownames_to_column("pid_t0") %>%
+    pivot_longer(-pid_t0, names_to = "pid_t1", values_to = "kulczynski")
 
-  # Create sequential labels
-  new_ids <- as.character(seq_along(common_patients))
-  ids_map <- setNames(new_ids, common_patients)
-  
   # Combine
-  cor_mat[[cmp_lab]] <- pearson_df %>%
-    left_join(kulc_df, by = c("pid_t1", "pid_t2")) %>%
-    mutate(
-      pid_t1_num = factor(ids_map[as.character(pid_t1)], levels = new_ids),
-      pid_t2_num = factor(ids_map[as.character(pid_t2)], levels = new_ids)
-    )
+  cor_mat[[cmp_lab]] <- left_join(
+    pearson_df, 
+    kulc_df, 
+    by = c("pid_t0", "pid_t1")
+  )
 }
 ```
 
 ```{r results='asis', fig.width=15, fig.height=6}
-# Heatmap: Pearson + Kulczynski (T1/T2)
-cmp_heat <- list(c("R_T1", "R_T2"), c("NR_T1", "NR_T2"))
+# Heatmap: Pearson + Kulczynski (T0/T1)
+cmp_heat <- list(c("R_T0", "R_T1"), c("NR_T0", "NR_T1"))
 metrics <- c("pearson", "kulczynski")
 for (cmp in cmp_heat) {
   
   cmp_lab <- paste(cmp[[1]], "vs", cmp[[2]], sep = "_")
   resp <- ifelse(str_starts(cmp[[1]], "NR"), "NR", "R")
+
+  # Keep only patients occurring in both timepoints
+  common_patients <- intersect(
+    unique(cor_mat[[cmp_lab]]$pid_t0), 
+    unique(cor_mat[[cmp_lab]]$pid_t1)
+  )
+  common_patients <- sort(common_patients)  # deterministic order
+
+  # Create sequential labels
+  new_ids <- as.character(seq_along(common_patients))
+  ids_map <- setNames(new_ids, common_patients)
+
+  df_hm <- cor_mat[[cmp_lab]] %>%
+    filter(pid_t0 %in% common_patients, pid_t1 %in% common_patients) %>%
+    mutate(
+      pid_t0_num = factor(ids_map[as.character(pid_t0)], levels = new_ids),
+      pid_t1_num = factor(ids_map[as.character(pid_t1)], levels = new_ids)
+    )
 
   # Create a tab header (level below the {.tabset} header)
   cat("### ", cmp_lab, "\n\n", sep = "")
@@ -443,13 +525,13 @@ for (cmp in cmp_heat) {
   p_heat <- lapply(metrics, function(metric) {
     
     # Create patient labels
-    x_labs <- levels(cor_mat[[cmp_lab]]$pid_t2_num)
-    y_labs <- levels(cor_mat[[cmp_lab]]$pid_t1_num)
+    x_labs <- levels(df_hm$pid_t1_num)
+    y_labs <- levels(df_hm$pid_t0_num)
     x_labs[seq_along(x_labs) %% 2 == 0] <- ""
     y_labs[seq_along(y_labs) %% 2 == 0] <- ""
     
-    cor_mat[[cmp_lab]] %>%
-      ggplot(aes(x = pid_t2_num, y = pid_t1_num, fill = .data[[metric]])) +
+    df_hm %>%
+      ggplot(aes(x = pid_t1_num, y = pid_t0_num, fill = .data[[metric]])) +
       geom_tile() +
       scale_fill_viridis_c(
         option = "plasma",
@@ -472,10 +554,10 @@ for (cmp in cmp_heat) {
         legend.text = element_text(size = 12)
       ) +
       labs(
-        title = paste0("Correlation between ", resp, ": T1 vs T2 Epitope Repertoires"),
+        title = paste0("Correlation between ", resp, ": T0 vs T1 Epitope Repertoires"),
         subtitle = metric,
-        x = paste0(resp, " T2 Ig epitope repertoire (individual count/ID)"),
-        y = paste0(resp, " T1 Ig epitope repertoire (individual count/ID)")
+        x = paste0(resp, " T1 Ig epitope repertoire (individual count/ID)"),
+        y = paste0(resp, " T0 Ig epitope repertoire (individual count/ID)")
       )
   })
   pw <- wrap_plots(p_heat)
@@ -484,21 +566,184 @@ for (cmp in cmp_heat) {
 }
 ```
 
+### Pearson (T0/T1) - R and NR combined
+
+```{r, fig.width=3.5, fig.height=3.5}
+# Heatmap: Pearson (T0/T1) - R and NR combined, matched patients only
+
+# Four blocks
+df_rr <- cor_mat[["R_T0_vs_R_T1"]]
+df_rn <- cor_mat[["R_T0_vs_NR_T1"]]
+df_nr <- cor_mat[["NR_T0_vs_R_T1"]]
+df_nn <- cor_mat[["NR_T0_vs_NR_T1"]]
+
+# Keep only patients occurring in both timepoints within each response group
+common_r <- sort(intersect(unique(df_rr$pid_t0), unique(df_rr$pid_t1)))
+common_nr <- sort(intersect(unique(df_nn$pid_t0), unique(df_nn$pid_t1)))
+
+# Create sequential labels
+r_ids  <- setNames(as.character(seq_along(common_r)),  common_r)
+nr_ids <- setNames(as.character(seq_along(common_nr)), common_nr)
+
+# Filter all four blocks consistently
+df_rr_f <- df_rr %>%
+  filter(pid_t0 %in% common_r, pid_t1 %in% common_r) %>%
+  mutate(
+    pid_t0_num = factor(r_ids[pid_t0], levels = as.character(seq_along(common_r))),
+    pid_t1_num = factor(r_ids[pid_t1], levels = as.character(seq_along(common_r)))
+  )
+
+df_rn_f <- df_rn %>%
+  filter(pid_t0 %in% common_r, pid_t1 %in% common_nr) %>%
+  mutate(
+    pid_t0_num = factor(r_ids[pid_t0], levels = as.character(seq_along(common_r))),
+    pid_t1_num = factor(nr_ids[pid_t1], levels = as.character(seq_along(common_nr)))
+  )
+
+df_nr_f <- df_nr %>%
+  filter(pid_t0 %in% common_nr, pid_t1 %in% common_r) %>%
+  mutate(
+    pid_t0_num = factor(nr_ids[pid_t0], levels = as.character(seq_along(common_nr))),
+    pid_t1_num = factor(r_ids[pid_t1], levels = as.character(seq_along(common_r)))
+  )
+
+df_nn_f <- df_nn %>%
+  filter(pid_t0 %in% common_nr, pid_t1 %in% common_nr) %>%
+  mutate(
+    pid_t0_num = factor(nr_ids[pid_t0], levels = as.character(seq_along(common_nr))),
+    pid_t1_num = factor(nr_ids[pid_t1], levels = as.character(seq_along(common_nr)))
+  )
+
+# Axis ordering
+r_x_ids  <- levels(df_rr_f$pid_t0_num)
+nr_x_ids <- levels(df_nn_f$pid_t0_num)
+r_y_ids  <- levels(df_rr_f$pid_t1_num)
+nr_y_ids <- levels(df_nn_f$pid_t1_num)
+
+x_levels <- c(paste0("R_", r_x_ids), paste0("NR_", nr_x_ids))
+y_levels <- c(paste0("R_", r_y_ids), paste0("NR_", nr_y_ids))
+
+x_labels <- c(
+  setNames(ifelse(seq_along(r_x_ids) %in% c(1, 10, 20, 30, 40), seq_along(r_x_ids), ""),
+           paste0("R_", r_x_ids)),
+  setNames(ifelse(seq_along(nr_x_ids) %in% c(1, 10, 20, 30, 40), seq_along(nr_x_ids), ""),
+           paste0("NR_", nr_x_ids))
+)
+
+y_labels <- c(
+  setNames(ifelse(seq_along(r_y_ids) %in% c(1, 10, 20, 30, 40), seq_along(r_y_ids), ""),
+           paste0("R_", r_y_ids)),
+  setNames(ifelse(seq_along(r_y_ids) %in% c(1, 10, 20, 30, 40), seq_along(nr_y_ids), ""),
+           paste0("NR_", nr_y_ids))
+)
+
+# Map each filtered block onto the combined axes
+df_comb <- bind_rows(
+  df_rr_f %>% mutate(
+    x_comb = paste0("R_", pid_t0_num),
+    y_comb = paste0("R_", pid_t1_num)
+  ),
+  df_rn_f %>% mutate(
+    x_comb = paste0("R_", pid_t0_num),
+    y_comb = paste0("NR_", pid_t1_num)
+  ),
+  df_nr_f %>% mutate(
+    x_comb = paste0("NR_", pid_t0_num),
+    y_comb = paste0("R_", pid_t1_num)
+  ),
+  df_nn_f %>% mutate(
+    x_comb = paste0("NR_", pid_t0_num),
+    y_comb = paste0("NR_", pid_t1_num)
+  )
+) %>%
+  mutate(
+    x_comb = factor(x_comb, levels = x_levels),
+    y_comb = factor(y_comb, levels = y_levels)
+  )
+
+p_heat_comb <- ggplot(df_comb, aes(x = x_comb, y = y_comb, fill = pearson)) +
+  geom_tile() +
+  scale_fill_viridis_c(
+    option = "plasma",
+    breaks = seq(0, 1, 0.1),
+    guide = guide_colorbar(
+      barheight = unit(0.75, "npc"),
+      barwidth  = unit(0.3, "cm"),
+      frame.colour = "black",
+      frame.linewidth = 0.2
+    )
+  ) +
+  scale_x_discrete(
+    breaks = c(
+      paste0("R_", r_x_ids[c(1, seq(5, length(r_x_ids), 5))]),
+      paste0("NR_", nr_x_ids[c(1, seq(5, length(nr_x_ids), 5))])
+    ),
+    labels = c(
+      x_labels[paste0("R_", r_x_ids[c(1, seq(5, length(r_x_ids), 5))])],
+      x_labels[paste0("NR_", nr_x_ids[c(1, seq(5, length(nr_x_ids), 5))])]
+    )
+  ) +
+  scale_y_discrete(
+    breaks = c(
+      paste0("R_", r_y_ids[c(1, seq(5, length(r_y_ids), 5))]),
+      paste0("NR_", nr_y_ids[c(1, seq(5, length(nr_y_ids), 5))])
+    ),
+    labels = c(
+      y_labels[paste0("R_", r_y_ids[c(1, seq(5, length(r_y_ids), 5))])],
+      y_labels[paste0("NR_", nr_y_ids[c(1, seq(5, length(nr_y_ids), 5))])]
+    )
+  ) +
+  coord_fixed() +
+  geom_vline(
+    xintercept = length(common_r) + 0.5,
+    linewidth = 0.35, 
+    colour = "white", 
+    linetype = "dashed"
+  ) +
+  geom_hline(
+    yintercept = length(common_r) + 0.5,
+    linewidth = 0.35, 
+    colour = "white", 
+    linetype = "dashed"
+  ) +
+  theme_bw(base_family = "Arial", base_size = 10) +
+  theme(
+    plot.title = element_text(size = 12),
+    plot.subtitle = element_text(size = 10),
+    axis.title = element_blank(),
+    axis.text = element_text(size = 10, colour = "black"),
+    axis.ticks = element_line(colour = "black", linewidth = 0.3),
+    axis.ticks.length = unit(1.5, "mm"),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.margin = margin(0.5, 0.5, 0.5, 0.5),
+    legend.box.margin = margin(0, 0, 0, -5),
+    panel.grid = element_blank(),
+    plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
+  ) +
+  labs(
+    title = "T1 vs. T0 Ig epitope repertoires",
+    subtitle = "Pearson correlation of log(fold change)"
+  )
+
+print(p_heat_comb)
+```
+
 ## Heatmap - Outlier {.tabset}
 
 I wanted to investigate the outlier in the responder heatmap because it doesn't
 make sense to me. First I thought maybe those two samples both have a very low
 number of enriched peptides, but that's not the case. Then I thought maybe the
 sample labels were swapped, but then the correlation should be symmetric. I now
-have the suspicion that patient 23 (T2) wasn't measured and is actually a sample 
+have the suspicion that patient 23 (T1) wasn't measured and is actually a sample 
 from patient PBT313 that was measured twice?
 
-* Patient 23 (T1) doesn't correlate with anything
+* Patient 23 (T0) doesn't correlate with anything
 * For patient PBT313 timepoints correlate with each other
-* And they both correlate with patient 23 (T2)
+* And they both correlate with patient 23 (T1)
 
 ```{r}
-checks <- c("T1_PBT313", "T2_PBT313", "T1_23", "T2_23")
+checks <- c("T0_PBT313", "T1_PBT313", "T0_23", "T1_23")
 hmout_corr <- ps %>%
   mutate(label = paste(timepoint, patientid, sep = "_")) %>%
   filter(label %in% checks) %>%
@@ -521,13 +766,21 @@ ggpairs(
 ```{r}
 # Extract correlations of matched/unmatched samples
 cor_stats <- list()
-for (cmp in names(cor_mat)) {
+for (cmp in names(cor_mat)[1:12]) {
+
+  # Keep only patients occurring in both timepoints
+  common_patients <- intersect(
+    unique(cor_mat[[cmp]]$pid_t0), 
+    unique(cor_mat[[cmp]]$pid_t1)
+  )
+
   matched <- cor_mat[[cmp]] %>%
-    filter(pid_t1 == pid_t2) %>%
+    filter(pid_t0 == pid_t1) %>%
     pull(pearson)
   
   unmatched <- cor_mat[[cmp]] %>%
-    filter(pid_t1 != pid_t2) %>%
+    filter(pid_t0 %in% common_patients, pid_t1 %in% common_patients) %>%
+    filter(pid_t0 != pid_t1) %>%
     pull(pearson)
   
   cor_stats[[cmp]] <- list(matched = matched, unmatched = unmatched)
@@ -535,11 +788,6 @@ for (cmp in names(cor_mat)) {
 ```
 
 ```{r}
-y_lim_up <- 180
-scale_fct <- 10
-col_pal <- c(unmatched = "grey70", matched = group_palette[["R"]])
-group <- "Responders"
-
 plot_um_m_corr <- function(cor_um,
                            cor_m,
                            y_lim_up = 200,
@@ -575,9 +823,9 @@ plot_um_m_corr <- function(cor_um,
     scale_fill_manual(values = col_pal) +
     labs(
       subtitle = group,
-      x = "Pearson correlation of \nlog(fold change) T1 vs T2"
+      x = "Pearson correlation of \nlog(fold change) T0 vs T1"
     ) +
-    theme_bw(base_size = 11) +
+    theme_bw(base_size = 12) +
     theme(
       text = element_text(family = "Montserrat"),
       axis.title.y.right = element_text(margin = margin(l = 8), angle = 90, vjust = 0.5),
@@ -588,21 +836,25 @@ plot_um_m_corr <- function(cor_um,
 }
 ```
 
-```{r, fig.width=8, fig.height=4}
+```{r, fig.width=7, fig.height=3.5}
 p1 <- plot_um_m_corr(
-  cor_stats$R_T1_vs_R_T2$unmatched,
-  cor_stats$R_T1_vs_R_T2$matched,
+  cor_stats$R_T0_vs_R_T1$unmatched,
+  cor_stats$R_T0_vs_R_T1$matched,
   y_lim_up = 180,
+  scale_fct = 10,
+  bins = 40,
   group = "Responders",
-  col_pal = c(um = phip_palette[[20]], m = group_palette[["R"]])
+  col_pal = c(um = "grey70", m = group_palette[["R"]])
 )
 
 p2 <- plot_um_m_corr(
-  cor_stats$NR_T1_vs_NR_T2$unmatched,
-  cor_stats$NR_T1_vs_NR_T2$matched,
+  cor_stats$NR_T0_vs_NR_T1$unmatched,
+  cor_stats$NR_T0_vs_NR_T1$matched,
   y_lim_up = 180,
+  scale_fct = 10,
+  bins = 40,
   group = "Non-responders",
-  col_pal = c(um = phip_palette[[20]], m = group_palette[["NR"]])
+  col_pal = c(um = "grey70", m = group_palette[["NR"]])
 )
 
 wrap_plots(p1, p2, ncol = 2)
@@ -633,8 +885,9 @@ stats_tests <- compare_means(
   data  = matched_df,
   group.by = "time_comp",
   method = "wilcox.test",
-  p.adjust.method = "BH"
-)
+  p.adjust.method = "bonferroni"
+) %>%
+  rstatix::add_significance("p.adj")
 
 # Put everything together
 matched_df <- matched_df %>%
@@ -657,7 +910,7 @@ ggplot(matched_df, aes(x = time_comp, y = mean, fill = group)) +
     width = 0.2
   ) +
   geom_text(
-    aes(x = time_comp, y = 1.1, label = p.signif),
+    aes(x = time_comp, y = 1.1, label = p.adj.signif),
     inherit.aes = FALSE,
     vjust = 0
   ) +
@@ -682,7 +935,7 @@ ggplot(matched_df, aes(x = time_comp, y = mean, fill = group)) +
 ```{r}
 pop_df %>%
   filter(category_rank_bh != "not significant") %>%
-  arrange(p_raw, p_adj_rank) %>%
+  arrange(p_adj_rank, p_raw) %>%
   relocate(p_raw, p_adj_rank, percent1, percent2, group1, group2, .after = feature) %>%
   head(10) %>%
   gt()
@@ -703,70 +956,122 @@ delta_df %>%
 # Figure 2 {.tabset}
 
 ```{r}
-make_scatter_flag <- function(pep_tbl, phip_palette) {
-  ## Flagellins scatter plot
+# Set colours
+peptide_palette <- c(
+  "Complete library"   = "#9467bd",
+  "Microbiome"         = "#ff9896",
+  "Pathogenic strains" = "#d62728",
+  "IgA"                = "#8c564b",
+  "Probiotic"          = "#98df8a",
+  "Flagellins"         = "#2ca02c",
+  "VFDB"               = "#e377c2",
+  "Phages"             = "#bcbd22",
+  "Allergens"          = "#17becf",
+  "IEDB controls"      = "#7f7f7f"
+)
+```
+
+```{r}
+make_scatter_flag <- function(pep_tbl, pval_mw_df, phip_palette) {
   # Apply filter
   pep_tbl_prev10 <- pep_tbl %>% filter((prop1 + prop2 >= 0.1))
-  # Add peptide library
+  
+  # Get peptide library
   peptide_library <- attr(pep_tbl, "prev_meta")$peptide_library
-  pep_tbl_peplib <- pep_tbl_prev10 %>%
-    left_join(peptide_library, by = c("feature" = "peptide_id"))
-  # MW test
-  pval_mw <- wilcox.test(ratio ~ is_bac_flagella, data = pep_tbl_peplib)$p.value
+
+  N1 <- unique(pep_tbl_prev10$N1)
+  N2 <- unique(pep_tbl_prev10$N2)
+
+  ## Flagellins scatter plot
+  # Extract adjusted p-value
+  pval_mw <- pval_mw_df %>% 
+    filter(group1 == "Complete library", group2 == "Flagellins") %>%
+    pull(p.adj)
   
   # Removing datapoints where is_flagellum is NA, so NAs won't be plotted
   # Alternatively could set NAs to FALSE in peptide_library to plot NAs too
   keep_flag <- peptide_library %>% filter(!is.na(is_bac_flagella))
   pep_tbl_flag <- pep_tbl_prev10 %>% filter(feature %in% keep_flag$peptide_id)
   
+  legend_lab <- paste0("Flagellins (p = ", format_pval(pval_mw), ")")
+  
   p_static <- scatter_static(
     df = pep_tbl_flag,
     rank = "peptide_id",
-    xlab = pep_tbl$group1[1],
-    ylab = pep_tbl$group2[1],
+    xlab = unique(pep_tbl$group1),
+    ylab = unique(pep_tbl$group2),
     color_by = "is_bac_flagella",
-    color_title = paste0("Flagellins (p = ", format_pval(pval_mw), ")"),
+    color_title = NULL,
     point_size = 2,
     point_alpha = 0,
     font_size = 12
   ) +
     coord_cartesian(xlim = c(-2, 102), ylim = c(-2, 102), expand = TRUE) +
     theme(
-      plot.margin = grid::unit(c(12, 12, 12, 12), "pt"),
-      text = element_text(family = "Montserrat")
+      text = element_text(size = 12, family = "Montserrat"),
+      legend.position = c(0, 1), 
+      legend.justification = c("left", "top"), 
+      legend.title = element_blank(),
+      axis.title = element_text(face = "plain"),
+      legend.text = element_text(size = 12),
+      plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
     ) +
-    scale_colour_manual(values = c(phip_palette[20], phip_palette[22]))
+    labs(
+      x = paste0(
+        "% of ", unique(pep_tbl$group1), " with a peptide \nsignificantly bound ",
+        "(n = ", N1, ")"
+      ),
+      y = paste0(
+        "% of ", unique(pep_tbl$group2), " with a peptide \nsignificantly bound ",
+        "(n = ", N2, ")"
+      )
+    )
   
   p_static$data <- p_static$data %>%
-    mutate(pt_size = if_else(is_bac_flagella == "yes", 2, 1)) %>%
-    arrange(is_bac_flagella)
-  
+    mutate(
+      pt_size = if_else(is_bac_flagella == 1, 2, 1),
+      legend_group = if_else(is_bac_flagella == 1, legend_lab, NA_character_)
+    )
+
   p_static <- p_static +
     geom_point(
-      data = p_static$data,
-      aes(x = percent1, y = percent2, colour = is_bac_flagella, size = pt_size),
+      data = p_static$data %>% filter(is_bac_flagella != 1),
+      aes(x = percent1, y = percent2),
+      colour = "grey70",
+      size = 1.2,
+      alpha = 0.5,
+      inherit.aes = FALSE,
+      show.legend = FALSE
+    ) +
+    geom_point(
+      data = p_static$data %>% filter(is_bac_flagella == 1),
+      aes(x = percent1, y = percent2, colour = legend_group),
+      size = 2,
       alpha = 0.5,
       inherit.aes = FALSE
-    ) + 
-    scale_size_identity()
-  
-    return(p_static)
+    ) +
+    scale_colour_manual(
+      values = c(setNames(peptide_palette[["Flagellins"]], legend_lab))
+    ) +
+    scale_size_identity() +
+    guides(colour = guide_legend(override.aes = list(size = 2.5, alpha = 0.5)))
+
+  return(p_static)
 }
 ```
 
 ## Peptide Comparison Between Groups (POP) {.tabset}
 
-- Normally we would test multiple groups not just flagellins, so then the
-p-value would have to be corrected for multiple testing.
-
 ```{r results='asis', fig.width=5, fig.height=5}
-for (nm in names(pep_tbl)) {
+cmp_scat <- c("R_T0_vs_NR_T0", "R_T1_vs_NR_T1", "R_T0_vs_R_T1", "NR_T0_vs_NR_T1")
+for (nm in cmp_scat) {
   
-  # create a tab header (level below the {.tabset} header)
+  # Create a tab header (level below the {.tabset} header)
   cat("### ", nm, "\n\n", sep = "")
   
   p <- make_scatter_flag(
     pep_tbl = pep_tbl[[nm]],
+    pval_mw_df = pval_mw_df[[nm]],
     phip_palette = phip_palette
   )
   
@@ -779,218 +1084,216 @@ for (nm in names(pep_tbl)) {
 
 - I set an arbitrary prevalence threshold of at least prop1 + prop2 >= 0.1
 - For some of the library categories not sure if they are correct?
-- Significance calulated with Wilcoxon and BH corrected
+- Significance calulated with Wilcoxon and Bonferroni corrected
 - Can't seem to reproduce the same plot. What test?
 - How are ratios calculated (to avoid Inf)?
 
-```{r, fig.width=10, fig.height=5}
-# Filter by prevalence
-pep_tbl_peplib <- pep_tbl$R_T1_vs_NR_T1 %>%
-  left_join(peplib, by = c("feature" = "peptide_id")) %>%
-  filter((prop1 + prop2 >= 0.1)) %>%
-  mutate(
-    is_library = TRUE,
-    is_bac_flagella = if_else(is_bac_flagella == "yes", TRUE, FALSE)
-  )
+```{r}
+# Apply filter
+pep_tbl_prev10 <- pep_tbl$R_T0_vs_NR_T0 %>% filter((prop1 + prop2 >= 0.1))
+
+# Add peptide library
+pep_tbl_peplib <- pep_tbl_prev10 %>%
+  left_join(
+    peplib,
+    by = c("feature" = "peptide_id")
+  ) %>%
+  mutate(is_library = 1)
 
 N1 <- unique(pep_tbl_peplib$N1)
 N2 <- unique(pep_tbl_peplib$N2)
 
 # Prepare long format for boxplots by annotation
 family_cols <- c(
-  "is_library" = "Complete library",
-  "is_MPA" = "Microbiome",
-  "is_patho" = "Pathogenic strains",
-  "is_IgA" = "IgA",
-  "is_probio" = "Probiotic",
-  "is_bac_flagella" = "Flagellins",
-  "is_infect" = "VFDB",
-  "is_phage" = "Phages",
-  "is_allergens" = "Allergens",
+  "is_library"       = "Complete library",
+  "is_MPA"           = "Microbiome",
+  "is_patho"         = "Pathogenic strains",
+  "is_IgA"           = "IgA",
+  "is_probio"        = "Probiotic",
+  "is_bac_flagella"  = "Flagellins",
+  "is_infect"        = "VFDB",
+  "is_phage"         = "Phages",
+  "is_allergens"     = "Allergens",
   "is_IEDB_or_cntrl" = "IEDB controls"
 )
 
-plot_df <- pep_tbl_peplib %>%
+pep_tbl_peplib_long <- pep_tbl_peplib %>%
   select(feature, ratio, all_of(names(family_cols))) %>%
   pivot_longer(
     cols = all_of(names(family_cols)),
     names_to = "family",
     values_to = "present"
   ) %>%
-  filter(present) %>%
+  filter(present == 1) %>%
   mutate(family_lab = factor(family_cols[family], levels = family_cols))
+```
 
-# Set colours
-oligo_palette <- setNames(phip_palette[1:nlevels(plot_df$family_lab)], family_cols)
-
-# Test each group against reference (Flagellins)
-pdat <- compare_means(
-  ratio ~ family_lab,
-  data = plot_df,
-  method = "wilcox.test",
-  ref.group = "Flagellins",
-  p.adjust.method = "BH"
-)
-
+```{r, fig.width=10, fig.height=5}
+## Boxplot - peptide categories (each dot = peptide)
 # Remove outliers for plotting (nicer plots)
-plot_df <- plot_df %>%
+pep_tbl_peplib_long <- pep_tbl_peplib_long %>%
   group_by(family_lab) %>%
   filter(!ratio %in% boxplot.stats(ratio)$out)
 
 # Stacked y positions so brackets don't overlap
-max_y <- max(plot_df$ratio, na.rm = TRUE)
-pdat <- pdat %>% mutate(y.position = max_y * (1 + 0.1 * row_number()))
+max_y <- max(pep_tbl_peplib_long$ratio, na.rm = TRUE)
+
+# Keep factor order exactly as used in the plot
+x_levels <- levels(factor(pep_tbl_peplib_long$family_lab))
+flag_pos <- match("Flagellins", x_levels)
+
+# Build p-value table for only comparisons involving flagellins
+pdat <- pval_mw_df$R_T0_vs_NR_T0 %>%
+  filter(group1 == "Flagellins" | group2 == "Flagellins") %>%
+  mutate(
+    other_group = if_else(group1 == "Flagellins", group2, group1),
+    other_pos = match(other_group, x_levels),
+    side = if_else(other_pos < flag_pos, "left", "right"),
+    dist = abs(other_pos - flag_pos)
+  ) %>%
+  # Make sure xmin is always the left category and xmax the right category
+  mutate(
+    xmin = if_else(other_pos < flag_pos, other_group, "Flagellins"),
+    xmax = if_else(other_pos < flag_pos, "Flagellins", other_group)
+  ) %>%
+  # Alternate left/right from inside to outside
+  arrange(dist, factor(side, levels = c("left", "right"))) %>%
+  mutate(
+    y.position = max_y * (1 + 0.11 * row_number())
+  ) %>%
+  rstatix::add_significance("p.adj")
 
 # Boxplot (each dot = peptide)
-ggplot(plot_df, aes(x = family_lab, y = ratio, fill = family_lab)) +
+p_pep_box <- ggplot(
+  pep_tbl_peplib_long, 
+  aes(x = family_lab, y = ratio, fill = family_lab)
+) +
   geom_boxplot(outlier.shape = NA) +
   geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
-  # scale_fill_manual(values = oligo_palette) +
-  ggthemes::scale_fill_tableau("Classic 10") +
+  scale_fill_manual(values = peptide_palette) +
   stat_pvalue_manual(
     pdat,
-    label = "p.signif",
-    xmin = "group1",
-    xmax = "group2",
+    label = "p.adj.signif",
+    xmin = "xmin",
+    xmax = "xmax",
     y.position = "y.position",
-    tip.length = 0.01
+    tip.length = 0.02,
+    size = 3.51
   ) +
   coord_cartesian(ylim = c(0, 6)) +
   labs(
-    title = paste0(
-      "Ratios of antibody responses by oligo family T1_PFS12 (", 
-      N1, ", ", N2, ")"
-    ),
-    x = NULL, y = "Ratios of antibody responses in R/NR"
+    x = NULL, 
+    y = paste0(
+      "Ratios of Ig response in \nR_T0_vs_NR_T0",
+      " (", N1, ", ", N2, ")"
+    )
   ) +
-  theme_bw(12) +
+  theme_phip(12) +
   theme(
-    text = element_text(family = "Montserrat"),
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank(),
-    title = element_text(size = 10),
+    text = element_text(size = 12, family = "Montserrat"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
     legend.position = "none",
     axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    axis.title = element_text(face = "plain"),
+    plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
   )
+
+print(p_pep_box)
 ```
 
-## Ratios of response by class and timepoint - Timepoints {.tabset}
+## Ratios of response to flagellins by class at different timepoints {.tabset}
 
-- I can't quite figure out why this plot looks so different here.
-- I think there should be a consensus. So far always R/NR and here suddenly PFS12?
-- How was significance calculated? Flagellins vs complete library?
+```{r}
+flagellins <- pep_tbl_peplib %>% filter(is_bac_flagella == 1) %>% pull(feature)
+class_lvls <- c("response (R/NR)", unique(labs$group_type))
+
+pep_tbl_all <- c(pep_tbl[1:4], pep_tbl_xtra)
+pval_mw_df_all <- c(pval_mw_df[1:4], pval_mw_df_xtra) %>% 
+  map(~ select(.x, -p.format))
+
+class_tp_df <- bind_rows(pep_tbl_all, .id = "contrast") %>%
+  filter(feature %in% flagellins) %>%
+  mutate(
+    tp = str_extract(group1, "T\\d+$"),
+    grp = str_remove(group1, "_T\\d+$"),
+    class = case_when(
+      grp %in% c("R", "NR") ~ "response (R/NR)",
+      str_detect(grp, "_") ~ str_extract(grp, "^[^_]+"),
+      TRUE ~ grp
+    ),
+    class = factor(class, levels = class_lvls)
+  )
+
+# Remove outliers for plotting (nicer plots)
+class_tp_df <- class_tp_df %>%
+  group_by(class, tp) %>%
+  filter(!ratio %in% boxplot.stats(ratio)$out)
+
+# Calculate the top of the whisker
+ypos_df <- class_tp_df %>%
+  group_by(class, tp) %>%
+  summarise(
+    y.position = boxplot.stats(ratio)$stats[5] + 0.5, 
+    .groups = "drop"
+  )
+
+# Build p-value table for flagellins vs. complete library only
+pdat <- bind_rows(pval_mw_df_all, .id = "contrast") %>%
+  filter(
+    (group1 == "Flagellins" & group2 == "Complete library") | 
+    (group1 == "Complete library" & group2 == "Flagellins")
+  ) %>%
+  rstatix::add_significance("p.adj") %>%
+  mutate(p.adj.signif = if_else(p.adj.signif == "ns", "", p.adj.signif)) %>%
+  select(contrast, p.signif, p.adj.signif) %>%
+  left_join(
+    class_tp_df %>% distinct(contrast, group1, group2, class, tp),
+    by = "contrast"
+  ) %>%
+  left_join(ypos_df, by = c("class", "tp"))
+```
 
 ```{r, fig.width=9, fig.height=4.5}
-flagellins <- pep_tbl_peplib$feature[pep_tbl_peplib$is_bac_flagella == TRUE]
-
-plot_df <- imap_dfr(pep_tbl_xtra, ~ mutate(.x, contrast = .y)) %>%
-  filter(feature %in% flagellins) %>%
-  separate(
-    contrast,
-    into = c("var", "value", "t1", "vs", "var2", "value2", "t2"),
-    sep = "_"
-  ) %>%
-  mutate(
-    ratio_inv = 1/ratio,
-    group_x = factor(
-      paste(var, value, sep = "_"), 
-      levels = unique(labs$group_lvl)
-    ),
-    tp_pair = paste(t2, t1, sep = "/"),
-    var = factor(var, levels = unique(labs$group_type))
-  )
-```
-
-```{r, fig.width=10, fig.height=5}
-plot_df %>%
-  filter(t1 != t2) %>%
-  filter(tp_pair %in% c("T2/T1", "T3/T1", "T4/T1")) %>%
-  ggplot(aes(x = group_x, y = ratio_inv, fill = tp_pair)) +
+p_class_tp_box <- class_tp_df %>%
+  ggplot(aes(x = class, y = ratio, fill = tp)) +
   geom_boxplot(position = position_dodge(width = 0.8), outlier.shape = NA) +
   geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
-  coord_cartesian(ylim = c(0, 5)) +
   labs(
-    title = "Ratios of antibody responses by class and timepoint", 
-    x = NULL, 
-    y = "Ratio of antibody responses between timepoints", 
+    x = NULL,
+    y = "Ratios of Ig response to \nflagellins by class (yes/no)", 
     fill = "Timepoint"
   ) +
   scale_fill_manual(values = c(
-    "T2/T1" = "#7fc97f",
-    "T3/T1" = "#fc8d62",
-    "T4/T1" = "#8da0cb"
+    "T0" = "grey70",
+    "T1" = "#6BBF58",
+    "T2" = "#59A14F",
+    "T3" = "#3D702D"
   )) +
-  theme_bw(12) +
-  theme(
-    text = element_text(family = "Montserrat"),
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank(),
-    title = element_text(size = 10),
-    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-  )
-```
-
-```{r, fig.width=10, fig.height=5}
-plot_df %>%
-  filter(t1 != t2) %>%
-  filter(var == "PFS12") %>%
-  ggplot(aes(x = group_x, y = ratio_inv, fill = tp_pair)) +
-  geom_boxplot(position = position_dodge(width = 0.8), outlier.shape = NA) +
-  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
-  coord_cartesian(ylim = c(0, 5)) +
-  labs(
-    title = "Ratios of antibody responses by Class and Timepoint", 
-    x = NULL, 
-    y = "Ratio of antibody responses between timepoints", 
-    fill = "Timepoint"
+  geom_text(
+    data = pdat,
+    aes(x = class, y = y.position, label = p.adj.signif, group = tp),
+    position = position_dodge(width = 0.8),
+    inherit.aes = FALSE,
+    size = 3.51,
+    angle = 90,
+    hjust = 0,
+    vjust = 0.7
   ) +
-  scale_fill_manual(values = c(
-    "T2/T1" = "#7fc97f",
-    "T3/T1" = "#fc8d62",
-    "T4/T1" = "#8da0cb",
-    "T3/T2" = "lightblue",
-    "T4/T2" = "maroon",
-    "T4/T3" = "#e78ac3"
-  )) +
-  theme_bw(12) +
+  theme_phip(12) +
   theme(
-    text = element_text(family = "Montserrat"),
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank(),
-    title = element_text(size = 10),
+    text = element_text(size = 12, family = "Montserrat"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
     axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    axis.title = element_text(face = "plain"),
+    plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt"),
+    legend.position = "right",
+    legend.direction = "vertical",
+    legend.title = element_text(face = "plain")
   )
-```
 
-## Ratios of response by class and timepoint - Class {.tabset}
-
-```{r, fig.width=10, fig.height=5}
-plot_df %>%
-  filter(t1 == t2) %>%
-  ggplot(aes(x = var, y = ratio, fill = t1)) +
-  geom_boxplot(position = position_dodge(width = 0.8), outlier.shape = NA) +
-  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
-  coord_cartesian(ylim = c(0, 8)) +
-  labs(
-    title = "Ratios of antibody responses by class and timepoint", 
-    x = NULL, 
-    y = "Ratio of antibody responses yes/no", 
-    fill = "Timepoint"
-  ) +
-  scale_fill_manual(values = c(
-    "T1" = "#7fc97f",
-    "T2" = "#fc8d62",
-    "T3" = "#8da0cb",
-    "T4" = "#e78ac3"
-  )) +
-  theme_bw(12) +
-  theme(
-    text = element_text(family = "Montserrat"),
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank(),
-    title = element_text(size = 10),
-    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-  )
+print(p_class_tp_box)
 ```
 
 
@@ -1020,21 +1323,38 @@ I was able to uniquely match patients based on age, sex and BMI.
 print("Patients with PhIP-Seq data (T1):")
 meta %>% filter(timepoint == "T1") %>% nrow()
 
-print("Patients with PhIP-Seq data (T1) and survival data:")
+print("Patients with PhIP-Seq data (T1) and survival data (initial metadata):")
 with_surv <- meta %>%
+  filter(timepoint == "T1") %>%
   mutate(bmi = round(bmi, 3)) %>%
   left_join(
     meta_surv %>% mutate(bmi = round(bmi, 3)), 
-    by = c("sex", "age", "bmi")
+    by = c("sex", "age", "bmi", "centre")
   ) %>% 
-  filter(
-    !is.na(os_months),
-    timepoint == "T1"
-  ) 
+  filter(!is.na(os_months)) %>%
+  select(LV_code, patientid, centre, response, os_months)
 
 with_surv %>% nrow()
+
+print("Patients with PhIP-Seq data (T1) and survival data (new metadata):")
+with_surv_new <- meta %>%
+  filter(timepoint == "T1") %>%
+  left_join(
+    meta_surv_new, 
+    by = c("patientid")
+  ) %>% 
+  filter(!is.na(time_months)) %>%
+  select(LV_code, patientid, centre, response, time_months)
+
+with_surv_new %>% nrow()
 ```
 
 ```{r}
-table(with_surv$response)
+with_surv_comb <- with_surv %>% full_join(with_surv_new) %>% distinct()
+
+with_surv_comb %>% nrow()
+table(with_surv_comb$response)
+table(with_surv_comb$centre)
+
+# One patient with different OS depending on metadata (LV1016273389)
 ```
