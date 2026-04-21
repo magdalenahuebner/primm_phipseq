@@ -9,4 +9,3 @@ renv/
 data/
 results/
 logs/
-**/*.html
