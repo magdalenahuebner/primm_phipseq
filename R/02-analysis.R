@@ -124,8 +124,8 @@ comp_main <- list(
   c("R_T1", "NR_T1"),
   c("R_T2", "NR_T2"),
   c("R_T3", "NR_T3"),
-  c("R_T1", "R_T0"),
-  c("NR_T1", "NR_T0")
+  c("R_T0", "R_T1"),
+  c("NR_T0", "NR_T1")
 )
 
 # Add more comparisons:
