@@ -174,17 +174,17 @@ labels <- unique(unlist(comparisons))
 group_palette <- setNames(
   ifelse(
     grepl("(^|_)NR(_|$)|(^|_)no(_|$)", labels),
-    phip_palette[9],
+    "#F28E2B",
     ifelse(
       grepl("(^|_)R(_|$)|(^|_)yes(_|$)", labels),
-      phip_palette[1],
+      "#4E79A7",
       NA_character_
     )
   ),
   labels
 )
-group_palette[["NR"]] <- phip_palette[9]
-group_palette[["R"]] <- phip_palette[1]
+group_palette[["NR"]] <- "#F28E2B"
+group_palette[["R"]] <- "#4E79A7"
 
 # ------------------------------------------------------------------------------
 # Parallel backend (DELTA)
@@ -683,16 +683,16 @@ for (cmp in comparisons) {
   
   # Set colours
   peptide_palette <- c(
-    "Complete library"   = "#9467bd",
-    "Microbiome"         = "#ff9896",
-    "Pathogenic strains" = "#d62728",
-    "IgA"                = "#8c564b",
-    "Probiotic"          = "#98df8a",
-    "Flagellins"         = "#2ca02c",
-    "VFDB"               = "#e377c2",
-    "Phages"             = "#bcbd22",
-    "Allergens"          = "#17becf",
-    "IEDB controls"      = "#7f7f7f"
+    "Complete library"   = "#B07AA1",
+    "Microbiome"         = "#FF9D9A",
+    "Pathogenic strains" = "#E15759",
+    "IgA"                = "#9D7660",
+    "Probiotic"          = "#8CD17D",
+    "Flagellins"         = "#59A14F",
+    "VFDB"               = "#D37295",
+    "Phages"             = "#B6992D",
+    "Allergens"          = "#499894",
+    "IEDB controls"      = "#86BCB6"
   )
   
   # MW test (all categories)
