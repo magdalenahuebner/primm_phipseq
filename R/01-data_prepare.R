@@ -115,6 +115,7 @@ samples_meta <- metadata %>%
 # Make peptide metadata compatible with downstream analysis (R and Python)
 peplib <- peplib %>%
   rename(peptide_id = oligo) %>%
+  mutate(across(where(is.logical), ~ replace_na(.x, FALSE))) %>%
   mutate(across(where(is.logical), as.integer)) %>%
   left_join(
     peplib_vogl %>%
