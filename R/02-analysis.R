@@ -18,11 +18,6 @@ set.seed(632961)
 
 source(file.path("R", "helpers.R"))
 
-# Add font + phiper use font in all plots
-font_add_google("Montserrat", "monte")
-phip_use_montserrat()
-showtext_auto()
-
 # ------------------------------------------------------------------------------
 # Command-line arguments
 # ------------------------------------------------------------------------------
@@ -271,7 +266,10 @@ for (cmp in comparisons) {
       ncol = 2,
       scales = "free_x"
     ) +
-    theme(text = element_text(size = 12)) +
+    theme(
+      text = element_text(size = 12, family = "Arial"),
+      axis.title = element_text(face = "plain")
+    ) +
     labs(title = NULL)
   
   ggsave(
@@ -323,12 +321,12 @@ for (cmp in comparisons) {
         vjust = -0.3,  # increase space between bracket and text
         tip.length = 0.02,
         label.size = 4.23,
-        family = "Montserrat"
+        family = "Arial"
       ) +
       scale_fill_manual(values = group_palette) +
       coord_cartesian(clip = "off") + 
       theme(
-        text = element_text(size = 12),
+        text = element_text(size = 12, family = "Arial"),
         axis.title.x = element_blank(),
         axis.title.y = element_text(face = "plain"),
         panel.grid.major = element_blank(),
@@ -419,8 +417,9 @@ for (cmp in comparisons) {
     ) +
     scale_colour_manual(values = group_palette) +
     theme(
-      text = element_text(size = 12),
+      text = element_text(size = 12, family = "Arial"),
       legend.title = element_blank(),
+      legend.text = element_text(size = 12),
       axis.title = element_text(face = "plain"),
       plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
     ) +
@@ -450,7 +449,11 @@ for (cmp in comparisons) {
   )
   
   # Scree plot for first 15 axes of PCoA
-  p_scree <- phiper:::plot_scree(pcoa_res, n_axes = 15, type = "line")
+  p_scree <- phiper:::plot_scree(pcoa_res, n_axes = 15, type = "line") +
+    theme(
+      text = element_text(size = 12, family = "Arial"),
+      axis.title = element_text(face = "plain")
+    )
   
   ggsave(
     filename = file.path(out_dir, "beta_diversity", "scree_plot.pdf"),
@@ -570,8 +573,8 @@ for (cmp in comparisons) {
       ) +
       theme_phip(12) +
       theme(
-        text = element_text(size = 12, family = "Montserrat"),
-        plot.subtitle = element_text(size = 12, hjust = 0),
+        text = element_text(size = 12, family = "Arial"),
+        plot.subtitle = element_text(size = 12, family = "Arial", hjust = 0),
         axis.title = element_text(face = "plain"),
         axis.title.y.right = element_text(margin = margin(l = 8), angle = 90, vjust = 0.5),
         axis.title.y.left  = element_text(margin = margin(r = 8)),
@@ -731,7 +734,7 @@ for (cmp in comparisons) {
   ) +
     coord_cartesian(xlim = c(-2, 102), ylim = c(-2, 102), expand = TRUE) +
     theme(
-      text = element_text(size = 12, family = "Montserrat"),
+      text = element_text(size = 12, family = "Arial"),
       legend.position = c(0, 1), 
       legend.justification = c("left", "top"), 
       legend.title = element_blank(),
@@ -833,9 +836,9 @@ for (cmp in comparisons) {
       xmin = "xmin",
       xmax = "xmax",
       y.position = "y.position",
-      tip.length = 0.02
+      tip.length = 0.02,
+      size = 3.51
     ) +
-    coord_cartesian(ylim = c(0, 6)) +
     labs(
       x = NULL, 
       y = paste0(
@@ -845,7 +848,7 @@ for (cmp in comparisons) {
     ) +
     theme_phip(12) +
     theme(
-      text = element_text(size = 12, family = "Montserrat"),
+      text = element_text(size = 12, family = "Arial"),
       panel.grid.major = element_blank(),
       panel.grid.minor = element_blank(),
       legend.position = "none",
@@ -1166,7 +1169,7 @@ p_corr_bars <- ggplot(matched_df, aes(x = time_comp, y = mean, fill = group)) +
     aes(x = time_comp, y = 1.1, label = p.adj.signif),
     inherit.aes = FALSE,
     vjust = 0,
-    size = 3.51
+    size = 4.23
   ) +
   scale_fill_manual(values = group_palette) +
   labs(
@@ -1177,7 +1180,8 @@ p_corr_bars <- ggplot(matched_df, aes(x = time_comp, y = mean, fill = group)) +
   theme(
     text = element_text(size = 12, family = "Arial"),
     axis.title = element_text(face = "plain"),
-    axis.text = element_text(size = 10),
+    axis.text = element_text(size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
     panel.grid = element_blank(),
     plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt"),
     legend.title = element_blank(),
@@ -1272,12 +1276,12 @@ p_class_tp_box <- class_tp_df %>%
     inherit.aes = FALSE,
     size = 3.51,
     angle = 90,
-    hjust = 0,
+    hjust = 0.5,
     vjust = 0.7
   ) +
   theme_phip(12) +
   theme(
-    text = element_text(size = 12, family = "Montserrat"),
+    text = element_text(size = 12, family = "Arial"),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
@@ -1285,7 +1289,8 @@ p_class_tp_box <- class_tp_df %>%
     plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt"),
     legend.position = "right",
     legend.direction = "vertical",
-    legend.title = element_text(face = "plain")
+    legend.title = element_text(face = "plain"),
+    legend.text = element_text(size = 12)
   )
 
 ggsave(
@@ -1314,7 +1319,7 @@ p_time_diff <- meta %>%
   ) +
   theme_phip(12) + 
   theme(
-    text = element_text(size = 12, family = "Montserrat"),
+    text = element_text(size = 12, family = "Arial"),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     axis.title = element_text(face = "plain"),
