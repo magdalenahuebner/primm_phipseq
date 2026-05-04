@@ -33,7 +33,7 @@ parquet_path      <- file.path(out_dir, "primm_full.parquet")
 
 ## ---------------------------- LOAD PHIP-SEQ DATA -----------------------------
 # Read wide-format peptide fold-change matrix
-primm_wide <- read.csv(file.path(in_dir, "phipseq_data_fixed_all.csv"))
+primm_wide <- read.csv(file.path(in_dir, "phipseq_data_28.04.26.csv"))
 
 # Convert to long format expected by downstream processing
 # Add `exist` indicator for peptide presence based on non-zero fold change
