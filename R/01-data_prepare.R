@@ -50,9 +50,7 @@ primm <- primm_wide %>%
 # Read sample-level metadata
 metadata <- read.csv(file.path(in_dir, "samples_metadata_28.04.26.csv"))
 # The read_csv() function is better at handling booleans
-peplib <- read_csv(file.path(in_dir, "oligos_metadata_ibd.csv"))
-# Extract the peptide library from phiper (downloaded from GitHub)
-peplib_vogl <- readRDS(file.path(in_dir, "combined_library_15.01.26.rds"))
+peplib <- read_csv(file.path(in_dir, "library_metadata_28.04.26.csv"))
 
 # Create one-hot encoded group indicators for response and clinical covariates
 # stratified by timepoint. Missing and empty values are excluded so that no
@@ -113,14 +111,10 @@ samples_meta <- metadata %>%
 
 # Make peptide metadata compatible with downstream analysis (R and Python)
 peplib <- peplib %>%
+  select(-Length) %>%  # Length and length making problems with DuckDB
   rename(peptide_id = oligo) %>%
   mutate(across(where(is.logical), ~ replace_na(.x, FALSE))) %>%
-  mutate(across(where(is.logical), as.integer)) %>%
-  left_join(
-    peplib_vogl %>%
-      select(peptide_id, phylum, class, order, family, genus, species),
-    by = "peptide_id"
-  )
+  mutate(across(where(is.logical), as.integer))
 
 # Data input for Carlos' automated report generator
 write.csv(primm_exist, exist_csv_path)
@@ -159,7 +153,6 @@ dbDisconnect(con, shutdown = TRUE)
 # Remove large intermediate objects no longer needed in the session
 rm(
   peplib,
-  peplib_vogl,
   primm_wide,
   primm,
   primm_exist,
