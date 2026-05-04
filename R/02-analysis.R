@@ -13,6 +13,9 @@ library(patchwork)
 library(rlang)
 library(showtext)
 library(vegan)
+library(ragg)
+library(gridExtra)
+library(grid)
 
 set.seed(632961)
 
@@ -243,11 +246,21 @@ for (cmp in comparisons) {
       group_char  = dplyr::if_else(.data[[var1]] == 1L, var1, var2),
       group_dummy = dplyr::if_else(.data[[var1]] == 1L, 1L, 0L)
     )
+  
+  # Prevalence-filtered data object
+  peptides_prev <- read.csv("data/raw/phipseq_data_prevalence_filtered.csv") %>%
+    select(-name) %>% names()
+  ps_prev <- ps_cmp %>% filter(peptide_id %in% peptides_prev)
 
   # Persist the filtered dataset used for downstream frameworks.
   make_and_save(
     data       = ps_cmp,
     out_path   = file.path(out_dir, paste0(label_dir, "_data.rds")),
+    extra_vars = "fold_change"
+  )
+  make_and_save(
+    data       = ps_prev,
+    out_path   = file.path(out_dir, paste0(label_dir, "_data_prev.rds")),
     extra_vars = "fold_change"
   )
 
@@ -280,10 +293,14 @@ for (cmp in comparisons) {
   )
 
   # ----------------------------------------------------------------------------
-  # Alpha diversity
+  # FIGURE 1
+  # ----------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
+  # Alpha diversity (1c)
   # ----------------------------------------------------------------------------
   alpha_div <- compute_alpha_diversity(
     ps_cmp,
+    ranks = "peptide_id",
     group_cols = "group_char",
     carry_cols = c("sex", "age")
   )
@@ -335,9 +352,24 @@ for (cmp in comparisons) {
       )
     
     if (m == "richness") {
-      p_alpha <- p_alpha + labs(y = "# of significantly bound peptides")
+      p_alpha <- p_alpha + 
+        labs(y = "# of significantly bound peptides") +
+        scale_y_continuous(breaks = seq(
+          0, 
+          ceiling(max(alpha_div[[m]], na.rm = TRUE) / 500) * 500,
+          by = 500
+        ))
     }
-    
+
+    if (m == "shannon_diversity") {
+      p_alpha <- p_alpha +
+        scale_y_continuous(breaks = seq(
+          0,
+          ceiling(max(alpha_div[[m]], na.rm = TRUE)),
+          by = 1
+        ))
+    }
+
     p_alpha
   })
   p_alpha <- wrap_plots(p_alpha)
@@ -350,7 +382,7 @@ for (cmp in comparisons) {
   )
   
   # ----------------------------------------------------------------------------
-  # Beta diversity
+  # Beta diversity (1d)
   # ----------------------------------------------------------------------------
   dist_bc <- phiper:::compute_distance(
     ps_cmp, value_col = "exist",
@@ -462,8 +494,9 @@ for (cmp in comparisons) {
     device = cairo_pdf, bg = "white"
   )
 
-  # Pearson correlation of log(fold change)
-
+  # ----------------------------------------------------------------------------
+  # Pearson correlation of log(fold change) (1e-g)
+  # ----------------------------------------------------------------------------
   if (any(vapply(comp_tps, identical, logical(1), cmp))) {
     # Calculate correlation of fold changes between different timepoints
     resp1 <- ifelse(str_starts(var1, "NR"), "NR", "R")
@@ -471,10 +504,10 @@ for (cmp in comparisons) {
     tp1 <- str_extract(var1, "T[0-9]+")
     tp2 <- str_extract(var2, "T[0-9]+")
 
-    ps_1 <- ps %>%
+    ps_1 <- ps_prev %>%
       filter(response == resp1, timepoint == tp1) %>%
       select(patientid, peptide_id, fold_change, exist)
-    ps_2 <- ps %>%
+    ps_2 <- ps_prev %>%
       filter(response == resp2, timepoint == tp2) %>%
       select(patientid, peptide_id, fold_change, exist)
 
@@ -520,8 +553,9 @@ for (cmp in comparisons) {
     write.csv(cor_mat, file = cor_mat_file, row.names = FALSE)
   }
 
-  # Correlation coefficients (Histogram)
-
+  # ----------------------------------------------------------------------------
+  # Correlation coefficients (Histogram) (1f)
+  # ----------------------------------------------------------------------------
   if (any(vapply(comp_tps[1:12], identical, logical(1), cmp))) {
     cor_mat <- read.csv(cor_mat_file)
 
@@ -559,16 +593,17 @@ for (cmp in comparisons) {
         bins = bins,
         alpha = 0.8
       ) +
+      scale_x_continuous(breaks = seq(0, 1, by = 0.2)) +
       scale_y_continuous(
-        name = "Unmatched individuals correlation",
+        name = "Unmatched patient samples (count)",
         sec.axis = sec_axis(
           ~ . / scale_fct, 
-          name = "Matched individuals correlation"
+          name = "Matched patient samples (count)"
         )
       ) +
       scale_fill_manual(values = col_pal) +
       labs(
-        subtitle = group,
+        subtitle = paste0(group, " (n = ", length(matched), ")"),
         x = paste0("Pearson correlation of \nlog(fold change) ", tp1, " vs. ", tp2)
       ) +
       theme_phip(12) +
@@ -592,9 +627,12 @@ for (cmp in comparisons) {
   }
 
   # ----------------------------------------------------------------------------
+  # FIGURE 2
+  # ----------------------------------------------------------------------------
+  # ----------------------------------------------------------------------------
   # POP framework
   # ----------------------------------------------------------------------------
-  data_frameworks <- readRDS(file.path(out_dir, paste0(label_dir, "_data.rds")))
+  data_frameworks <- readRDS(file.path(out_dir, paste0(label_dir, "_data_prev.rds")))
   data_frameworks$group_char <- factor(data_frameworks$group_char, levels = cmp)
   peptide_library <- readRDS(file = file.path("results", "peptide_library.rds"))
 
@@ -611,6 +649,11 @@ for (cmp in comparisons) {
       peptide_library   = peptide_library,
       collect           = TRUE
     )
+    pep_tbl <- pep_tbl %>%
+      filter(prop1 > 0, prop2 > 0) %>%
+      mutate(ratio = prop1 / prop2) %>%
+      filter(!is.na(ratio), ratio != 1)
+
     saveRDS(pep_tbl, pep_tbl_rds)
   } else {
     pep_tbl <- readRDS(pep_tbl_rds)
@@ -643,11 +686,8 @@ for (cmp in comparisons) {
   # ----------------------------------------------------------------------------
   # MW test (all categories)
   # ----------------------------------------------------------------------------
-  # Apply filter
-  pep_tbl_prev10 <- pep_tbl %>% filter((prop1 + prop2 >= 0.1))
-  
   # Add peptide library
-  pep_tbl_peplib <- pep_tbl_prev10 %>%
+  pep_tbl_peplib <- pep_tbl %>%
     left_join(
       peptide_library,
       by = c("feature" = "peptide_id")
@@ -660,18 +700,23 @@ for (cmp in comparisons) {
   # Prepare long format for boxplots by annotation
   family_cols <- c(
     "is_library"       = "Complete library",
-    "is_MPA"           = "Microbiome",
-    "is_patho"         = "Pathogenic strains",
+    "is_microbiome"    = "Microbiome",
+    "is_toxin"         = "Pathogenic strains",
     "is_IgA"           = "IgA",
     "is_probio"        = "Probiotic",
     "is_bac_flagella"  = "Flagellins",
-    "is_infect"        = "VFDB",
+    # "is_infect"        = "VFDB",
     "is_phage"         = "Phages",
     "is_allergens"     = "Allergens",
     "is_IEDB_or_cntrl" = "IEDB controls"
   )
   
   pep_tbl_peplib_long <- pep_tbl_peplib %>%
+    mutate(
+      is_microbiome = as.integer(
+        coalesce(is_PNP, 0L) == 1L | coalesce(is_nonPNP_strains, 0L) == 1L
+      )
+    ) %>%
     select(feature, ratio, all_of(names(family_cols))) %>%
     pivot_longer(
       cols = all_of(names(family_cols)),
@@ -689,7 +734,7 @@ for (cmp in comparisons) {
     "IgA"                = "#9D7660",
     "Probiotic"          = "#8CD17D",
     "Flagellins"         = "#59A14F",
-    "VFDB"               = "#D37295",
+    # "VFDB"               = "#D37295",
     "Phages"             = "#B6992D",
     "Allergens"          = "#499894",
     "IEDB controls"      = "#86BCB6"
@@ -700,7 +745,7 @@ for (cmp in comparisons) {
     ratio ~ family_lab,
     data = pep_tbl_peplib_long,
     method = "wilcox.test",
-    p.adjust.method = "bonferroni"
+    p.adjust.method = "BH"
   ) %>%
   rstatix::add_significance("p.adj") %>%
   select(-p.format)
@@ -708,7 +753,9 @@ for (cmp in comparisons) {
   pval_mw_file <- file.path(out_dir, "POP_framework", "pval_mw_df.csv")
   write.csv(pval_mw_df, file = pval_mw_file, row.names = FALSE)
   
-  ## Flagellins scatter plot
+  # ----------------------------------------------------------------------------
+  # Flagellins scatter plot (2a, c-e)
+  # ----------------------------------------------------------------------------
   # Extract adjusted p-value
   pval_mw <- pval_mw_df %>% 
     filter(group1 == "Complete library", group2 == "Flagellins") %>%
@@ -717,7 +764,7 @@ for (cmp in comparisons) {
   # Removing datapoints where is_flagellum is NA, so NAs won't be plotted
   # Alternatively could set NAs to FALSE in peptide_library to plot NAs too
   keep_flag <- peptide_library %>% filter(!is.na(is_bac_flagella))
-  pep_tbl_flag <- pep_tbl_prev10 %>% filter(feature %in% keep_flag$peptide_id)
+  pep_tbl_flag <- pep_tbl %>% filter(feature %in% keep_flag$peptide_id)
   
   legend_lab <- paste0("Flagellins (p = ", format_pval(pval_mw), ")")
   
@@ -789,14 +836,11 @@ for (cmp in comparisons) {
     device = cairo_pdf, bg = "white"
   )
   
-  ## Boxplot - peptide categories (each dot = peptide)
-  # Remove outliers for plotting (nicer plots)
-  pep_tbl_peplib_long <- pep_tbl_peplib_long %>%
-    group_by(family_lab) %>%
-    filter(!ratio %in% boxplot.stats(ratio)$out)
-  
+  # ----------------------------------------------------------------------------
+  # Boxplot - peptide categories (each dot = peptide) (2b)
+  # ----------------------------------------------------------------------------
   # Stacked y positions so brackets don't overlap
-  max_y <- max(pep_tbl_peplib_long$ratio, na.rm = TRUE)
+  max_y <- quantile(pep_tbl_peplib_long$ratio, 0.95, na.rm = TRUE) + 0.4
 
   # Keep factor order exactly as used in the plot
   x_levels <- levels(factor(pep_tbl_peplib_long$family_lab))
@@ -827,9 +871,12 @@ for (cmp in comparisons) {
     pep_tbl_peplib_long, 
     aes(x = family_lab, y = ratio, fill = family_lab)
   ) +
-    geom_boxplot(outlier.shape = NA) +
+    geom_boxplot(outliers = FALSE) +
     geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
     scale_fill_manual(values = peptide_palette) +
+    coord_cartesian(
+      ylim = c(0, quantile(pep_tbl_peplib_long$ratio, 0.95, na.rm = TRUE) + 3.5)
+    ) +
     stat_pvalue_manual(
       pdat,
       label = "p.adj.signif",
@@ -864,60 +911,60 @@ for (cmp in comparisons) {
     device = cairo_pdf, bg = "white"
   )
   
-  if (any(vapply(comp_main, identical, logical(1), cmp))) {
-    # ----------------------------------------------------------------------------
-    # DELTA framework
-    # ----------------------------------------------------------------------------
-    dir.create(file.path(out_dir, "DELTA_framework"), recursive = T, showWarnings = F)
+#   # ----------------------------------------------------------------------------
+#   # DELTA framework
+#   # ----------------------------------------------------------------------------
+#   if (any(vapply(comp_main, identical, logical(1), cmp))) {
+#     dir.create(file.path(out_dir, "DELTA_framework"), recursive = T, showWarnings = F)
     
-    data_frameworks$subject_id <- data_frameworks$sample_id
-    peptide_library[] <- lapply(peptide_library, as.character)
-    log_file_current <- if (is.null(LOG_FILE)) {
-      file.path(out_dir, "DELTA_framework", "log.txt")
-    } else {
-      LOG_FILE
-    }
+#     data_frameworks$subject_id <- data_frameworks$sample_id
+#     peptide_library[] <- lapply(peptide_library, as.character)
+#     log_file_current <- if (is.null(LOG_FILE)) {
+#       file.path(out_dir, "DELTA_framework", "log.txt")
+#     } else {
+#       LOG_FILE
+#     }
     
-    delta_file <- file.path(out_dir, "DELTA_framework", "delta_table.csv")
-    if(!file.exists(delta_file) | FORCE) {
-      res <- phiper::compute_delta(
-        x = data_frameworks,
-        exist_col = "exist",
-        rank_cols = c(
-          "phylum", "class", "order", "family", "genus", "species",
-          "is_auto", "is_infect", "is_EBV", "is_toxin", "is_PNP", "is_EM",
-          "is_MPA", "is_patho", "is_probio", "is_IgA", "is_bac_flagella",
-          "is_allergens"
-        ),
-        group_cols          = "group_char",
-        peptide_library     = peptide_library,
-        B_permutations      = 150000L,
-        smooth_eps_num      = 0.5,
-        smooth_eps_den_mult = 2.0,
-        min_max_prev        = 0.0,
-        weight_mode         = "n_eff_sqrt",
-        stat_mode           = "asin",
-        prev_strat          = "none",
-        winsor_z            = Inf,
-        rank_feature_keep   = list(
-          phylum  = NULL, class = NULL, order = NULL, family = NULL, genus = NULL,
-          species = NULL,
-          is_auto = "1", is_infect = "1", is_EBV = "1", is_toxin = "1",
-          is_PNP = "1", is_EM = "1", is_MPA  = "1", is_patho = "1", 
-          is_probio = "1", is_IgA = "1", is_bac_flagella = "1", 
-          is_allergens = "1"
-        ),
-        log                 = LOG,
-        log_file            = log_file_current,
-        fold_change         = "sum",
-        cross_prev          = "mean"
-      )
-      res <- as.data.frame(res)
-      write.csv(res, file = delta_file)
-    } else {
-      res <- read.csv(delta_file)
-    }
-  }
+#     delta_file <- file.path(out_dir, "DELTA_framework", "delta_table.csv")
+#     if(!file.exists(delta_file) | FORCE) {
+#       res <- phiper::compute_delta(
+#         x = data_frameworks,
+#         exist_col = "exist",
+#         rank_cols = c(
+#           "phylum", "class", "order", "family", "genus", "species",
+#           "is_auto", "is_infect", "is_EBV", "is_toxin", "is_PNP", "is_EM",
+#           "is_MPA", "is_patho", "is_probio", "is_IgA", "is_bac_flagella",
+#           "is_allergens"
+#         ),
+#         group_cols          = "group_char",
+#         peptide_library     = peptide_library,
+#         B_permutations      = 150000L,
+#         smooth_eps_num      = 0.5,
+#         smooth_eps_den_mult = 2.0,
+#         min_max_prev        = 0.0,
+#         weight_mode         = "n_eff_sqrt",
+#         stat_mode           = "asin",
+#         prev_strat          = "none",
+#         winsor_z            = Inf,
+#         rank_feature_keep   = list(
+#           phylum  = NULL, class = NULL, order = NULL, family = NULL, genus = NULL,
+#           species = NULL,
+#           is_auto = "1", is_infect = "1", is_EBV = "1", is_toxin = "1",
+#           is_PNP = "1", is_EM = "1", is_MPA  = "1", is_patho = "1", 
+#           is_probio = "1", is_IgA = "1", is_bac_flagella = "1", 
+#           is_allergens = "1"
+#         ),
+#         log                 = LOG,
+#         log_file            = log_file_current,
+#         fold_change         = "sum",
+#         cross_prev          = "mean"
+#       )
+#       res <- as.data.frame(res)
+#       write.csv(res, file = delta_file)
+#     } else {
+#       res <- read.csv(delta_file)
+#     }
+#   }
 }
 
 # ------------------------------------------------------------------------------
@@ -926,11 +973,12 @@ for (cmp in comparisons) {
 future::plan(original_plan)
 
 # ------------------------------------------------------------------------------
-# Add some additional cross-comparison plots
+# FIGURE 1 (cross-comparison)
 # ------------------------------------------------------------------------------
-
+# ------------------------------------------------------------------------------
+# Correlation coefficients (Heatmap) (1e)
+# ------------------------------------------------------------------------------
 # Heatmap: Pearson (T0/T1) - R and NR combined, matched patients only
-
 cor_mat <- list()
 for(cmp in c(
   "R_T0_vs_R_T1", 
@@ -1105,8 +1153,9 @@ ggsave(
   device = cairo_pdf, bg = "white"
 )
 
-# Correlation coefficients (Barplots)
-
+# ------------------------------------------------------------------------------
+# Correlation coefficients (Barplots) (1g)
+# ------------------------------------------------------------------------------
 cor_stats <- list()
 for(cmp in comp_tps[1:12]) {
   cmp_lab <- paste(cmp[[1]], "vs", cmp[[2]], sep = "_")
@@ -1138,14 +1187,15 @@ matched_df <- bind_rows(
   )
 
 # Compute significance between R/NR at each timepoint comparison
+
 stats_tests <- compare_means(
   value ~ group,
   data  = matched_df,
   group.by = "time_comp",
-  method = "wilcox.test",
-  p.adjust.method = "bonferroni"
+  method = "t.test",
+  p.adjust.method = "none"
 ) %>%
-  rstatix::add_significance("p.adj")
+  rstatix::add_significance("p")
 
 # Put everything together
 matched_df <- matched_df %>%
@@ -1166,7 +1216,7 @@ p_corr_bars <- ggplot(matched_df, aes(x = time_comp, y = mean, fill = group)) +
     width = 0.2
   ) +
   geom_text(
-    aes(x = time_comp, y = 1.1, label = p.adj.signif),
+    aes(x = time_comp, y = 1.1, label = p.signif),
     inherit.aes = FALSE,
     vjust = 0,
     size = 4.23
@@ -1196,18 +1246,18 @@ ggsave(
   device = cairo_pdf, bg = "white"
 )
 
-# Ratios of response to flagellins by class at different timepoints
-
+# ------------------------------------------------------------------------------
+# FIGURE 2 (cross-comparison)
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Ratios of response to flagellins by class at different timepoints (2f)
+# ------------------------------------------------------------------------------
 pep_tbl_all <- list()
 pval_mw_df_all <- list()
-prev10 <- c()
 for(cmp_pair in c(comp_main[1:4], cmp_within$cmp)) {
   cmp <- paste0(cmp_pair[1], "_vs_", cmp_pair[2])
   pep_tbl_all[[cmp]] <- readRDS(file.path("results", cmp, "POP_framework", "single_peptide.rds"))
   pval_mw_df_all[[cmp]] <- read.csv(file.path("results", cmp, "POP_framework", "pval_mw_df.csv"))
-  
-  pep_tbl_prev10 <- pep_tbl_all[[cmp]] %>% filter((prop1 + prop2 >= 0.1))
-  prev10 <- union(prev10, pep_tbl_prev10$feature)
 }
 
 flagellins <- peptide_library %>% filter(is_bac_flagella == 1) %>% pull(peptide_id)
@@ -1215,7 +1265,6 @@ class_lvls <- c("response (R/NR)", unique(labs$group_type))
 
 class_tp_df <- bind_rows(pep_tbl_all, .id = "contrast") %>%
   filter(feature %in% flagellins) %>%
-  filter(feature %in% prev10) %>%
   mutate(
     tp = str_extract(group1, "T\\d+$"),
     grp = str_remove(group1, "_T\\d+$"),
@@ -1226,11 +1275,6 @@ class_tp_df <- bind_rows(pep_tbl_all, .id = "contrast") %>%
     ),
     class = factor(class, levels = class_lvls)
   )
-
-# Remove outliers for plotting (nicer plots)
-class_tp_df <- class_tp_df %>%
-  group_by(class, tp) %>%
-  filter(!ratio %in% boxplot.stats(ratio)$out)
 
 # Calculate the top of the whisker
 ypos_df <- class_tp_df %>%
@@ -1256,7 +1300,7 @@ pdat <- bind_rows(pval_mw_df_all, .id = "contrast") %>%
 
 p_class_tp_box <- class_tp_df %>%
   ggplot(aes(x = class, y = ratio, fill = tp)) +
-  geom_boxplot(position = position_dodge(width = 0.8), outlier.shape = NA) +
+  geom_boxplot(position = position_dodge(width = 0.8), outliers = FALSE) +
   geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
   labs(
     x = NULL,
@@ -1264,7 +1308,7 @@ p_class_tp_box <- class_tp_df %>%
     fill = "Timepoint"
   ) +
   scale_fill_manual(values = c(
-    "T0" = "grey70",
+    "T0" = "white",
     "T1" = "#6BBF58",
     "T2" = "#59A14F",
     "T3" = "#3D702D"
@@ -1287,8 +1331,8 @@ p_class_tp_box <- class_tp_df %>%
     axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
     axis.title = element_text(face = "plain"),
     plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt"),
-    legend.position = "right",
-    legend.direction = "vertical",
+    legend.position = c(0.02, 0.98),
+    legend.justification = c(0, 1),
     legend.title = element_text(face = "plain"),
     legend.text = element_text(size = 12)
   )
@@ -1300,22 +1344,59 @@ ggsave(
   device = cairo_pdf, bg = "white"
 )
 
-# Time interval between treatment start and sample collection
+# ------------------------------------------------------------------------------
+# SUPPLEMENTARY FIGURES
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Serum collection time relative to IO start (weeks)
+# ------------------------------------------------------------------------------
 # Sample metadata
-meta <- read.csv(file.path("data/processed/", "metadata.csv")) %>%
-  mutate(group_char = paste(response, timepoint, sep = "_"))
+meta <- read.csv(file.path("data/raw", "metadata_fixed_all.csv"))
 
-p_time_diff <- meta %>%
+meta <- meta %>%
   mutate(
     baseline_date = as.Date(start_io, "%d/%m/%Y"),
     timepoint_date = as.Date(serum_collection_date, "%d/%m/%Y"),
-    diff_tp_base_week = difftime(timepoint_date, baseline_date, units = "weeks")
-  ) %>%
-  ggplot(aes(x = timepoint, y = diff_tp_base_week)) +
-  geom_boxplot(outliers = TRUE) +
+    diff_tp_base_week = as.numeric(difftime(timepoint_date, baseline_date, units = "weeks"))
+  )
+
+# Count samples per timepoint
+tp_counts <- meta %>% count(timepoint)
+tp_labels <- setNames(
+  paste0(tp_counts$timepoint, "\n(", tp_counts$n, ")"),
+  tp_counts$timepoint
+)
+
+p_time_diff <- meta %>%
+  ggplot(aes(x = timepoint, y = diff_tp_base_week, fill = timepoint)) +
+  geom_boxplot(
+    outliers = TRUE,
+    outlier.size = 0.8
+  ) +
+  geom_hline(
+    aes(yintercept = 0, linetype = "IO start (baseline)"),
+    color = "#E15759",
+    linewidth = 0.5
+  ) +
+  scale_linetype_manual(
+    name = NULL,
+    values = c("IO start (baseline)" = "dashed")
+  ) +
+  scale_fill_manual(
+    values = c(
+      "T0" = "white",
+      "T1" = "grey80",
+      "T2" = "grey60",
+      "T3" = "grey40"
+    )
+  ) +
+  guides(fill = "none") +
+  scale_x_discrete(labels = tp_labels) +
+  scale_y_continuous(breaks = seq(-30, 30, by = 10)) +
+  coord_cartesian(ylim = c(-30, 30)) +
   labs(
     x = NULL,
-    y = "Time interval between treatment \nstart and sample collection (weeks)"
+    y = "Serum collection time relative \nto IO start (weeks)"
   ) +
   theme_phip(12) + 
   theme(
@@ -1323,7 +1404,13 @@ p_time_diff <- meta %>%
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     axis.title = element_text(face = "plain"),
-    plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt")
+    plot.margin = margin(5.5, 5.5, 5.5, 5.5, unit = "pt"),
+    legend.position = c(0.98, 0.02),
+    legend.justification = c(1, 0),
+    legend.text = element_text(size = 12),
+    legend.background = element_blank(),
+    legend.key = element_blank(),
+    legend.key.width = unit(1, "cm")
   )
 
 ggsave(
@@ -1332,3 +1419,145 @@ ggsave(
   width = 9, height = 9, units = "cm",
   device = cairo_pdf, bg = "white"
 )
+
+# ------------------------------------------------------------------------------
+# FIGURE 1
+# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Metadata table (1b)
+# ------------------------------------------------------------------------------
+meta <- read.csv(file.path("data/raw", "metadata_fixed_all.csv"))
+tps <- c("T0","T1","T2","T3")
+
+safe_percentage <- function(numerator, denominator){
+  if (denominator > 0) numerator/denominator*100 else NA_real_
+}
+
+format_count_percentage <- function(count, percentage){
+  if (is.na(percentage)) sprintf("%s (nan)", count)
+  else sprintf("%s (%.1f)", count, percentage)
+}
+
+out <- list()
+for (tp in tps) {
+
+  df <- meta %>% filter(timepoint == tp)
+  n_samples <- nrow(df)
+
+  count_female  <- sum(df$sex == "female", na.rm = TRUE)
+  count_pfs12   <- sum(df$PFS12 == "yes", na.rm = TRUE)
+  count_orr   <- sum(df$ORR == "yes", na.rm = TRUE)
+  count_tox   <- sum(df$toxicity == "yes", na.rm = TRUE)
+  count_col   <- sum(df$colitis == "yes", na.rm = TRUE)
+  count_combiIO <- sum(df$combiIO == "yes", na.rm = TRUE)
+  count_antib <- sum(df$antibiotics == "yes", na.rm = TRUE)
+  count_ppi <- sum(df$ppi == "yes", na.rm = TRUE)
+
+  summary_vec <- c(
+    
+    "Total, n (%)" = sprintf("%s (100)", n_samples),
+
+    "Age (years)" = sprintf(
+      "%.1f [%.1f; %.1f]",
+      median(df$age, na.rm = TRUE),
+      quantile(df$age, 0.25, na.rm = TRUE),
+      quantile(df$age, 0.75, na.rm = TRUE)
+    ),
+
+    "BMI (kg/m^2)" = sprintf(
+      "%.1f [%.1f; %.1f]",
+      median(df$bmi, na.rm = TRUE),
+      quantile(df$bmi, 0.25, na.rm = TRUE),
+      quantile(df$bmi, 0.75, na.rm = TRUE)
+    ),
+
+    "Sex (female), n (%)" = format_count_percentage(
+      count_female,
+      safe_percentage(count_female, n_samples)
+    ),
+
+    "Response, n (%)" = format_count_percentage(
+      count_pfs12,
+      safe_percentage(count_pfs12, n_samples)
+    ),
+
+    "ORR, n (%)" = format_count_percentage(
+      count_orr,
+      safe_percentage(count_orr, n_samples)
+    ),
+
+    "Toxicity, n (%)" = format_count_percentage(
+      count_tox,
+      safe_percentage(count_tox, n_samples)
+    ),
+
+    "Colitis, n (%)" = format_count_percentage(
+      count_col,
+      safe_percentage(count_col, n_samples)
+    ),
+  
+    "CombiIO, n (%)" = format_count_percentage(
+      count_combiIO,
+      safe_percentage(count_combiIO, n_samples)
+    ),
+
+    "Antibiotics, n (%)" = format_count_percentage(
+      count_antib,
+      safe_percentage(count_antib, n_samples)
+    ),
+
+    "PPI, n (%)" = format_count_percentage(
+      count_ppi,
+      safe_percentage(count_ppi, n_samples)
+    )
+  )
+
+  out[[tp]] <- summary_vec
+}
+
+table1_df <- as.data.frame(out, check.names = FALSE) %>% rownames_to_column("Type")
+colnames(table1_df)[1] <- ""
+fontsize <- 6
+
+g <- tableGrob(
+  table1_df,
+  rows = NULL,
+  theme = ttheme_default(
+    core = list(
+      fg_params = list(
+        fontfamily = "Arial",
+        fontsize = fontsize,
+        col = "black",
+        hjust = 0.5,
+        x = 0.5
+      ),
+      bg_params = list(fill = "white", col = "black", lwd = 1),
+      padding = unit(c(1.3, 1.5), "mm")  # (vertical, horizontal)
+    ),
+    colhead = list(
+      fg_params = list(
+        fontfamily = "Arial",
+        fontsize = fontsize,
+        col = "black"
+      ),
+      bg_params = list(fill = "white", col = "black", lwd = 1),
+      padding = unit(c(1.3, 1.5), "mm")
+    )
+  )
+)
+
+# First column left aligned
+idx_left <- which(g$layout$l == 1 & g$layout$name %in% c("core-fg", "colhead-fg"))
+for (i in idx_left) {
+  g$grobs[[i]]$hjust <- 0
+  g$grobs[[i]]$x <- unit(0.04, "npc")
+}
+
+cairo_pdf(
+  file.path("results", "table_meta.pdf"),
+  width = 9/2.54, 
+  height = 4.5/2.54, 
+  family = "Arial"
+)
+grid.draw(g)
+dev.off()
