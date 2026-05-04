@@ -48,7 +48,7 @@ primm <- primm_wide %>%
 
 ## ---------------------------- LOAD METADATA ----------------------------------
 # Read sample-level metadata
-metadata <- read.csv(file.path(in_dir, "metadata_fixed_all.csv"))
+metadata <- read.csv(file.path(in_dir, "samples_metadata_28.04.26.csv"))
 # The read_csv() function is better at handling booleans
 peplib <- read_csv(file.path(in_dir, "oligos_metadata_ibd.csv"))
 # Extract the peptide library from phiper (downloaded from GitHub)
@@ -60,7 +60,6 @@ peplib_vogl <- readRDS(file.path(in_dir, "combined_library_15.01.26.rds"))
 group_vars <- c("response", "ORR", "toxicity", "colitis", "combiIO", "antibiotics", "ppi")
 
 metadata <- metadata %>%
-  mutate(response = if_else(PFS12 == "yes", "R", "NR")) %>%
   pivot_longer(
     cols = all_of(group_vars),
     names_to = "group_type",
